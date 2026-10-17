@@ -73,9 +73,13 @@ Synthetic decisions with the scheduler's cost structure, 10 instances per size:
 | 80 (10x8) | 2.0%* | 7.3%* / 23 | 1.0%* / 161 | n/a |
 
 *gap to the best solution any method found (no exact optimum).
-Zero one-hot constraint violations in all runs. Inside the simulator,
-`adaptive-qubo` performs within noise of the greedy variant (cold, p=0.3:
-384 vs 389) at about 10x the decision latency (≈2 ms vs 0.15 ms).
+Zero one-hot constraint violations in all runs. Inside the simulator
+(cold scenario), `adaptive-qubo` builds QUBOs of 17 variables on average,
+solved in about 6 ms each. It is 2–4% slower than the greedy variant at
+p ≤ 0.2 (e.g. 344 vs 332 at p=0.2) and level at p=0.3 (384 vs 389), at
+about 10x the decision latency (2–3 ms vs 0.2 ms per decision). Better
+per-decision objective values do not automatically translate into better
+makespans: the batch objective is itself an approximation.
 
 Reading: per-decision problems are small (≤48 variables by design), which
 is exactly where SA reaches the optimum and greedy leaves 6–17% on the
