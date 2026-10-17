@@ -84,7 +84,7 @@ def plot_gantt(sim, path: Path, title: str = "") -> None:
                        Patch(facecolor="#d93025", hatch="//", label="lost to crash"),
                        Patch(facecolor="#bdc1c6", hatch="..", label="cancelled replica"),
                        Patch(color="#000000", alpha=0.08, label="worker down")],
-              loc="lower right", fontsize=8, frameon=False, ncol=4)
+              loc="upper center", bbox_to_anchor=(0.5, -0.22), fontsize=8, frameon=False, ncol=4)
     ax.grid(axis="x", alpha=0.3)
     fig.tight_layout()
     fig.savefig(path, dpi=150)
