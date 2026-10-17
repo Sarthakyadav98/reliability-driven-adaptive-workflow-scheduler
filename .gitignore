@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Generated experiment output. Regenerate with the scripts; commit selected figures under docs/ instead.
+results/
