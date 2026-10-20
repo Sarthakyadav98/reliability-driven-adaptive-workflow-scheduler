@@ -22,6 +22,9 @@ from rdas.experiments import ExperimentConfig, run_grid, summarize
 from rdas.schedulers import BASELINES
 from rdas.viz import plot_sweep
 
+# reliability-heft vs eft-retry = reliability term on/off (no fault tolerance);
+# eft-threshold / adaptive-threshold = the team's rule-based FT policy (Anirudh's baseline).
+EXTRA = ["eft-threshold", "reliability-heft", "adaptive-threshold"]
 ABLATIONS = ["adaptive-no-replication", "adaptive-no-reassign"]
 
 
@@ -34,11 +37,11 @@ def main() -> None:
     seeds = list(range(100, 100 + a.seeds))
     probs = [0.0, 0.05, 0.1, 0.2, 0.3]
     scenarios = {
-        "cold": ExperimentConfig(schedulers=BASELINES + ["adaptive", "adaptive-qubo"] + ABLATIONS,
+        "cold": ExperimentConfig(schedulers=BASELINES + EXTRA + ["adaptive", "adaptive-qubo"] + ABLATIONS,
                                  failure_probs=probs, seeds=seeds),
-        "warm": ExperimentConfig(schedulers=BASELINES + ["adaptive"] + ABLATIONS,
+        "warm": ExperimentConfig(schedulers=BASELINES + EXTRA + ["adaptive"] + ABLATIONS,
                                  failure_probs=probs, seeds=seeds, warmup_workflows=2),
-        "degrade": ExperimentConfig(schedulers=BASELINES + ["adaptive"] + ABLATIONS,
+        "degrade": ExperimentConfig(schedulers=BASELINES + EXTRA + ["adaptive"] + ABLATIONS,
                                     failure_probs=probs, seeds=seeds, degrade_fraction=0.34),
     }
     for name in a.scenarios.split(","):
@@ -51,9 +54,9 @@ def main() -> None:
         df.to_csv(out / "runs.csv", index=False)
         summary.to_csv(out / "summary.csv", index=False)
         (out / "config.json").write_text(json.dumps(asdict(cfg), indent=2))
-        plot_sweep(summary[~summary.scheduler.isin(ABLATIONS)], out)
-        cols = ["failure_prob", "scheduler", "makespan", "makespan_ci", "deadline_met", "recovery_overhead",
-                "resource_overhead", "replicas", "decision_ms"]
+        plot_sweep(summary[~summary.scheduler.isin(ABLATIONS + EXTRA)], out)
+        cols = ["failure_prob", "scheduler", "completed", "makespan", "makespan_ci", "deadline_met",
+                "recovery_overhead", "resource_overhead", "replicas", "decision_ms"]
         with pd.option_context("display.width", 200, "display.precision", 3):
             print(summary[cols].to_string(index=False))
 

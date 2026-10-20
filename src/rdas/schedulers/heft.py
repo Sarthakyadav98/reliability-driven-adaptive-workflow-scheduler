@@ -5,9 +5,14 @@ from __future__ import annotations
 import bisect
 from dataclasses import dataclass
 
+from ..fault_tolerance import RetryOnly, ThresholdFT
+from ..fault_tolerance import StaticReplication as FTStaticReplication
 from ..models import WorkerSpec, Workflow
 from ..workflow import upward_rank
 from .base import Assignment, Decision, Scheduler
+from .cost import CostModel, mean_costs
+from .placement import EFTPlacement
+from .policy import PolicyScheduler
 
 
 @dataclass
@@ -20,11 +25,6 @@ class HeftPlan:
     @property
     def makespan(self) -> float:
         return max(self.finish)
-
-
-def mean_costs(wf: Workflow, workers: list[WorkerSpec]) -> list[float]:
-    inv = sum(1.0 / w.speed for w in workers) / len(workers)
-    return [t.work * inv for t in wf.tasks]
 
 
 def heft_plan(wf: Workflow, workers: list[WorkerSpec]) -> HeftPlan:
@@ -87,41 +87,21 @@ class HEFT(Scheduler):
         return dec
 
 
-class _OnlineEFT(Scheduler):
-    """Dynamic list scheduling: decreasing rank_u, place on the up worker(s) with earliest finish."""
+class EFTRetry(PolicyScheduler):
+    """Online HEFT-style list scheduling (decreasing rank_u, earliest-finish worker) with
+    resubmission on failure to whichever worker now finishes earliest.
 
-    copies = 1
-
-    def setup(self, view) -> None:
-        self.rank = upward_rank(view.workflow, mean_costs(view.workflow, view.workers))
-
-    def decide(self, view) -> Decision:
-        dec = Decision()
-        up = [w for w in range(len(view.workers)) if view.is_up(w)]
-        if not up:
-            return dec
-        avail = {w: view.backlog(w) for w in up}
-        ready = sorted(view.ready_tasks(), key=lambda t: -self.rank[t])
-        for tid in ready:
-            eft = sorted(up, key=lambda w: (avail[w] + view.nominal_duration(tid, w), w))
-            for w in eft[: self.copies]:
-                dec.assign.append(Assignment(tid, w, priority=-self.rank[tid]))
-                avail[w] += view.nominal_duration(tid, w)
-        return dec
-
-
-class EFTRetry(_OnlineEFT):
-    """Online EFT with resubmission on failure to whichever worker now finishes earliest.
-
-    The standard *retry* fault-tolerance policy. It is also the reliability-blind
-    twin of the adaptive scheduler (same priorities and placement rule without
-    reliability), which makes it the cleanest ablation.
+    The standard *retry* policy. It is also the reliability-blind twin of the
+    adaptive scheduler (same priorities and placement rule without reliability),
+    which makes it the cleanest ablation.
     """
 
-    name = "eft-retry"
+    def __init__(self) -> None:
+        super().__init__(EFTPlacement(), RetryOnly(), cost=CostModel(reliability_aware=False),
+                         batch_size=10**9, name="eft-retry")
 
 
-class StaticReplication(_OnlineEFT):
+class StaticReplication(PolicyScheduler):
     """Static fault-tolerant baseline: every task is replicated on its k earliest-finish workers.
 
     Uniform k-replication (primary/backup, k = 2) is the classic fixed
@@ -130,5 +110,14 @@ class StaticReplication(_OnlineEFT):
     """
 
     def __init__(self, k: int = 2):
-        self.copies = k
-        self.name = f"replicate-{k}"
+        super().__init__(EFTPlacement(), FTStaticReplication(k), cost=CostModel(reliability_aware=False),
+                         batch_size=10**9, name=f"replicate-{k}")
+
+
+class ThresholdReplication(PolicyScheduler):
+    """Rule-based fault tolerance from the team's first baseline (Anirudh): replicate
+    critical tasks when workers look unreliable or slack is low. EFT placement."""
+
+    def __init__(self) -> None:
+        super().__init__(EFTPlacement(), ThresholdFT(), cost=CostModel(reliability_aware=False),
+                         batch_size=10**9, name="eft-threshold")

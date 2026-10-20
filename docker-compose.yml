@@ -1,0 +1,72 @@
+# Real-execution demo: 1 orchestrator + 3 worker-agent containers on a private network.
+#
+#   docker compose build
+#   docker compose up -d worker-1 worker-2 worker-3      # start the workers
+#   docker compose run --rm orchestrator                 # run eft-retry vs adaptive with a scripted crash
+#   docker compose stop worker-2                         # (optional) real container stop mid-run
+#   docker compose down
+#
+# Worker speeds and failure rates are controlled experimental settings, not
+# measurements. Containers on one host are not independent failure domains.
+
+x-worker: &worker
+  image: rdas:latest  # built once by the orchestrator service below
+  environment: &worker-env
+    RDAS_ENABLE_ADMIN: "1"
+    RDAS_SEED: "0"
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+    interval: 3s
+    timeout: 3s
+    retries: 10
+  networks: [rdas]
+
+services:
+  worker-1:
+    <<: *worker
+    environment:
+      <<: *worker-env
+      RDAS_WORKER_ID: worker-1
+      RDAS_SPEED: "1.0"
+      RDAS_FAILURE_RATE: "0.02"
+    ports: ["8001:8000"]
+
+  worker-2:
+    <<: *worker
+    environment:
+      <<: *worker-env
+      RDAS_WORKER_ID: worker-2
+      RDAS_SPEED: "1.5"
+      RDAS_FAILURE_RATE: "0.30"
+    ports: ["8002:8000"]
+
+  worker-3:
+    <<: *worker
+    environment:
+      <<: *worker-env
+      RDAS_WORKER_ID: worker-3
+      RDAS_SPEED: "0.8"
+      RDAS_FAILURE_RATE: "0.0"
+    ports: ["8003:8000"]
+
+  orchestrator:
+    build: .
+    image: rdas:latest
+    depends_on:
+      worker-1: {condition: service_healthy}
+      worker-2: {condition: service_healthy}
+      worker-3: {condition: service_healthy}
+    command: >
+      python -m rdas.live
+      --workflow workflows/demo_dag.json
+      --workers http://worker-1:8000,http://worker-2:8000,http://worker-3:8000
+      --compare eft-retry,adaptive
+      --chaos 1@8:10
+      --seconds-per-unit 0.15
+      --out /app/results/docker
+    volumes:
+      - ./results:/app/results
+    networks: [rdas]
+
+networks:
+  rdas: {}

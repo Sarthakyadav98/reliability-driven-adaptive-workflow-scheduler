@@ -31,12 +31,17 @@ def _color(name: str) -> str:
 def plot_sweep(summary: pd.DataFrame, out: Path) -> None:
     out = Path(out)
     panels = [
-        ("makespan", "Mean makespan", "makespan_ci"),
+        ("makespan", "Mean makespan (completed runs)", "makespan_ci"),
+        ("completed", "Workflow success (fraction of runs)", None),
         ("deadline_met", "Deadline met (fraction of runs)", None),
         ("recovery_overhead", "Recovery overhead (makespan - fault-free)", None),
         ("resource_overhead", "Resource overhead (wasted / useful work)", None),
+        ("utilization", "Worker utilization (busy / available)", None),
     ]
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8.5))
+    panels = [p for p in panels if p[0] in summary.columns]
+    fig, axes = plt.subplots(2, 3, figsize=(17, 8.5))
+    for ax in axes.flat[len(panels):]:
+        ax.axis("off")
     for ax, (col, title, err) in zip(axes.flat, panels):
         for name, g in summary.groupby("scheduler", sort=False):
             g = g.sort_values("failure_prob")

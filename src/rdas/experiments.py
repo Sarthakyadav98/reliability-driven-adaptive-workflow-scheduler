@@ -15,11 +15,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .engine import Simulation, default_estimator, default_ref_duration
+from .engine import DEFAULT_MAX_RETRIES, Simulation, default_estimator, default_ref_duration
+from .reliability import ESTIMATORS
 from .faults import Degradation, FaultConfig
 from .schedulers import BASELINES, make_scheduler
 from .schedulers.heft import heft_plan
-from .workers import make_pool
+from .pool import make_pool
 from .workflow import fork_join, layered_dag
 
 DEFAULT_SCHEDULERS = BASELINES + ["adaptive", "adaptive-qubo"]
@@ -44,6 +45,9 @@ class ExperimentConfig:
     # 0 = cold start: no history at all.
     warmup_workflows: int = 0
     scheduler_options: dict = field(default_factory=dict)
+    estimator: str = "gamma-poisson"  # gamma-poisson | beta-bernoulli | ema
+    estimator_options: dict = field(default_factory=dict)
+    max_retries: int = DEFAULT_MAX_RETRIES
 
 
 def build_instance(cfg: ExperimentConfig, seed: int):
@@ -85,16 +89,28 @@ def _make(cfg: ExperimentConfig, name: str, seed: int):
 
 def warm_estimator(cfg: ExperimentConfig, name: str, wf, pool, p: float, seed: int, ref: float):
     """Run ``cfg.warmup_workflows`` other workflows on the same pool and return the shared estimator."""
-    est = default_estimator(pool, ref)
-    if not name.startswith("adaptive"):
-        return est  # baselines never read the estimator
+    est = make_estimator(cfg, pool, ref)
+    if not (name.startswith("adaptive") or name.startswith("reliability")):
+        return est  # reliability-blind schedulers never read the estimator
     for k in range(cfg.warmup_workflows):
         wseed = 10_000 + 97 * seed + k
         warm_wf = layered_dag(len(wf), np.random.default_rng([wseed, 1]))
         warm_plan = heft_plan(warm_wf, pool)
         faults = fault_config(cfg, p, ref, warm_plan.makespan, wseed, len(pool))
-        Simulation(warm_wf, pool, _make(cfg, name, wseed), faults, seed=wseed, estimator=est).run()
+        Simulation(warm_wf, pool, _make(cfg, name, wseed), faults, seed=wseed, estimator=est,
+                   max_retries=cfg.max_retries).run()
     return est
+
+
+def make_estimator(cfg: ExperimentConfig, pool, ref: float):
+    if cfg.estimator == "gamma-poisson":
+        est = default_estimator(pool, ref)
+        for k, v in cfg.estimator_options.items():  # e.g. prior_exposure / half_life in ref units
+            setattr(est, {"prior_exposure": "b0"}.get(k, k), v * ref if k in ("prior_exposure", "half_life") else v)
+        return est
+    if cfg.estimator not in ESTIMATORS:
+        raise ValueError(f"unknown estimator {cfg.estimator!r}; choose from {sorted(ESTIMATORS)}")
+    return ESTIMATORS[cfg.estimator](len(pool), **cfg.estimator_options)
 
 
 def run_grid(cfg: ExperimentConfig, progress: bool = True) -> pd.DataFrame:
@@ -108,13 +124,17 @@ def run_grid(cfg: ExperimentConfig, progress: bool = True) -> pd.DataFrame:
             faults = fault_config(cfg, p, ref, plan.makespan, seed, len(pool))
             for name in cfg.schedulers:
                 est = warm_estimator(cfg, name, wf, pool, p, seed, ref)
-                res = Simulation(wf, pool, _make(cfg, name, seed), faults, seed=seed, estimator=est).run()
+                res = Simulation(wf, pool, _make(cfg, name, seed), faults, seed=seed, estimator=est,
+                                 max_retries=cfg.max_retries).run()
                 row = res.as_row()
                 row.update(seed=seed, failure_prob=p, heft_plan_makespan=plan.makespan)
                 rows.append(row)
         if progress:
             print(f"  seed {seed} done ({time.perf_counter() - t_start:.1f}s)", flush=True)
     df = pd.DataFrame(rows)
+    # A workflow that failed has no makespan: keep it out of time statistics (NaN) and
+    # report it through the separate workflow-success column ("completed").
+    df["makespan"] = df["makespan"].replace(np.inf, np.nan)
     base = df[df.failure_prob == 0.0].set_index(["scheduler", "seed"])["makespan"]
     df["fault_free_makespan"] = [base.get((s, sd), np.nan) for s, sd in zip(df.scheduler, df.seed)]
     df["recovery_overhead"] = df["makespan"] - df["fault_free_makespan"]
@@ -132,15 +152,20 @@ def summarize(df: pd.DataFrame) -> pd.DataFrame:
     g = df.groupby(["failure_prob", "scheduler"])
     out = g.agg(
         runs=("makespan", "size"),
-        completed=("completed", "mean"),
-        makespan=("makespan", "mean"),
+        completed=("completed", "mean"),  # workflow success rate
+        task_success=("task_success_rate", "mean"),
+        makespan=("makespan", "mean"),  # over completed runs only
         makespan_ci=("makespan", ci95),
         norm_makespan=("normalized_makespan", "mean"),
         deadline_met=("deadline_met", "mean"),
         recovery_overhead=("recovery_overhead", "mean"),
+        recovery_time=("recovery_time_mean", "mean"),
         resource_overhead=("resource_overhead", "mean"),
+        utilization=("utilization", "mean"),
         failed_attempts=("n_failed_attempts", "mean"),
+        retries=("n_retries", "mean"),
         replicas=("n_replicas", "mean"),
+        replicas_started=("replicas_started", "mean"),
         reassignments=("n_revoked", "mean"),
         decision_ms=("mean_decision_ms", "mean"),
     )
@@ -161,6 +186,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--slowdown-rate", type=float, default=0.0)
     ap.add_argument("--degrade-fraction", type=float, default=0.0)
     ap.add_argument("--warmup", type=int, default=0, help="warm-up workflows sharing the estimator")
+    ap.add_argument("--estimator", default="gamma-poisson", choices=sorted(ESTIMATORS))
+    ap.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES)
     ap.add_argument("--out", default="results/sweep")
     ap.add_argument("--no-plots", action="store_true")
     a = ap.parse_args(argv)
@@ -172,7 +199,7 @@ def main(argv: list[str] | None = None) -> None:
         n_tasks=a.tasks, n_workers=a.workers, workflow=a.workflow,
         deadline_factor=a.deadline_factor, mttr_factor=a.mttr_factor,
         slowdown_rate=a.slowdown_rate, degrade_fraction=a.degrade_fraction,
-        warmup_workflows=a.warmup,
+        warmup_workflows=a.warmup, estimator=a.estimator, max_retries=a.max_retries,
     )
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)

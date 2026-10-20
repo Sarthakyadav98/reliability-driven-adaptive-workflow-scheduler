@@ -17,6 +17,7 @@ class Assignment:
     task: int
     worker: int
     priority: float | None = None  # lower runs first in the worker's queue; None = FIFO
+    reason: str = ""  # fault-tolerance decision behind this copy (logged per attempt)
 
 
 @dataclass

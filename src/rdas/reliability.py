@@ -26,6 +26,11 @@ class _EstimatorBase:
     def observe_crash(self, worker: int) -> None:
         self.crashes[worker] += 1
 
+    def observe_failure(self, worker: int) -> None:
+        """A worker-related failure while the worker stayed up (injected fault, timeout,
+        dispatch error). Counted as a failure event, like a crash."""
+        self.observe_crash(worker)
+
     def observe_recovery(self, worker: int, downtime: float) -> None:
         self._mttr[worker] = 0.5 * self._mttr[worker] + 0.5 * downtime
 
@@ -156,3 +161,28 @@ class EMAEstimator(_EstimatorBase):
 
     def p_success(self, worker: int, duration: float) -> float:
         return self._r[worker]
+
+
+class BetaBernoulliEstimator(_EstimatorBase):
+    """Beta-Bernoulli posterior mean of attempt success (Anirudh's baseline estimator):
+
+        R_w = (a + s_w) / (a + b + s_w + f_w)
+
+    with prior a = 8, b = 2 (initial estimate 0.8). Duration-agnostic: a long
+    task is assumed to be as safe as a short one. Only worker-related failures
+    reach ``observe_attempt``, because the engine filters out task errors.
+    """
+
+    name = "beta-bernoulli"
+
+    def __init__(self, n_workers: int, a: float = 8.0, b: float = 2.0, **kw):
+        super().__init__(n_workers, **kw)
+        self.a = a
+        self.b = b
+
+    def p_success(self, worker: int, duration: float) -> float:
+        s, f = self.successes[worker], self.failures[worker]
+        return (self.a + s) / (self.a + self.b + s + f)
+
+
+ESTIMATORS = {"gamma-poisson": GammaPoissonEstimator, "ema": EMAEstimator, "beta-bernoulli": BetaBernoulliEstimator}

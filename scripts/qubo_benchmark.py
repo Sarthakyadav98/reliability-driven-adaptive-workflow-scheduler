@@ -106,7 +106,36 @@ def main() -> None:
     axes[0].legend(frameon=False, fontsize=8)
     fig.tight_layout()
     fig.savefig(out / "qubo_benchmark.png", dpi=150)
+    penalty_sweep(out, a.instances)
     print(f"written to {out}")
+
+
+def penalty_sweep(out: Path, instances: int) -> None:
+    """Penalty-weight sensitivity: A = scale x (safe bound), on problems where some tasks need
+    2 copies. Reports the *raw* feasibility rate (before repair), the quality of the repaired
+    solution vs the exact optimum, and build / anneal time separately."""
+    rows = []
+    for n, m in [(4, 4), (6, 4), (4, 6)]:  # small enough to brute-force with 2-copy tasks
+        for inst in range(instances):
+            rng = np.random.default_rng([n, m, inst, 7])
+            prob = scheduler_like_problem(n, m, rng)
+            prob.k = [2 if rng.random() < 0.4 else 1 for _ in range(n)]
+            exact = prob.energy(brute_force(prob, limit=200_000))
+            for scale in [0.1, 0.25, 0.5, 1.0, 2.0, 4.0]:
+                solver = QuboSolver(num_reads=50, num_sweeps=1000, seed=inst, penalty_scale=scale)
+                assign, info = solver.solve(prob)
+                rows.append({"size": f"{n}x{m}", "penalty_scale": scale, "feasible": info.feasible,
+                             "gap_pct": 100 * (info.energy - exact) / exact,
+                             "build_ms": 1000 * info.build_seconds, "anneal_ms": 1000 * info.anneal_seconds})
+    df = pd.DataFrame(rows)
+    df.to_csv(out / "penalty_sweep.csv", index=False)
+    summary = df.groupby(["size", "penalty_scale"]).agg(
+        feasibility_rate=("feasible", "mean"), mean_gap_pct=("gap_pct", "mean"),
+        build_ms=("build_ms", "mean"), anneal_ms=("anneal_ms", "mean")).reset_index()
+    summary.to_csv(out / "penalty_sweep_summary.csv", index=False)
+    print("\nPenalty sweep (A = scale x safe bound; feasibility = raw annealer output, before repair):")
+    with pd.option_context("display.width", 200, "display.precision", 3):
+        print(summary.to_string(index=False))
 
 
 if __name__ == "__main__":

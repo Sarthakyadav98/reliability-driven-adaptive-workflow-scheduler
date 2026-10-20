@@ -1,11 +1,44 @@
-"""Scheduler registry. Every scheduler runs on the same engine and metrics code."""
+"""Scheduler registry. Every scheduler runs on the same engine and metrics code.
+
+Except static HEFT, every scheduler = fault-tolerance policy + placement backend:
+
+| name                    | placement           | fault tolerance        | reassign |
+|-------------------------|---------------------|------------------------|----------|
+| round-robin             | round robin         | retry                  | -        |
+| least-loaded            | least backlog       | retry                  | -        |
+| heft                    | static HEFT plan    | resubmit to plan       | -        |
+| eft-retry               | online EFT          | retry                  | -        |
+| replicate-2             | online EFT          | always 2 copies        | -        |
+| eft-threshold           | online EFT          | threshold rule         | -        |
+| reliability-heft        | reliability-aware   | retry                  | -        |
+| adaptive                | reliability-aware   | expected-cost          | yes      |
+| adaptive-qubo           | QUBO + SA           | expected-cost          | yes      |
+| adaptive-threshold      | reliability-aware   | threshold rule         | yes      |
+| adaptive-no-replication | reliability-aware   | retry                  | yes      |
+| adaptive-no-reassign    | reliability-aware   | expected-cost          | -        |
+"""
 
 from __future__ import annotations
 
+from ..fault_tolerance import RetryOnly, ThresholdFT
 from .adaptive import AdaptiveScheduler
 from .base import Assignment, Decision, Scheduler
-from .heft import HEFT, EFTRetry, StaticReplication, heft_plan
+from .cost import CostModel
+from .heft import HEFT, EFTRetry, StaticReplication, ThresholdReplication, heft_plan
+from .placement import CostPlacement
+from .policy import PolicyScheduler
 from .simple import LeastLoaded, RoundRobin
+
+
+def _reliability_heft(**kw):
+    return PolicyScheduler(CostPlacement("greedy"), RetryOnly(), reassignment=False,
+                           cost=CostModel(), name="reliability-heft")
+
+
+def _adaptive_threshold(**kw):
+    return PolicyScheduler(CostPlacement("greedy"), ThresholdFT(), reassignment=True,
+                           cost=CostModel(), name="adaptive-threshold")
+
 
 # Factories take keyword options (e.g. seed, explain); baselines ignore them.
 REGISTRY = {
@@ -14,8 +47,11 @@ REGISTRY = {
     "heft": lambda **kw: HEFT(),
     "eft-retry": lambda **kw: EFTRetry(),
     "replicate-2": lambda **kw: StaticReplication(k=2),
+    "eft-threshold": lambda **kw: ThresholdReplication(),
+    "reliability-heft": _reliability_heft,
     "adaptive": lambda **kw: AdaptiveScheduler(backend="greedy", **kw),
     "adaptive-qubo": lambda **kw: AdaptiveScheduler(backend="qubo", **kw),
+    "adaptive-threshold": _adaptive_threshold,
     # Ablations: which part of the adaptive mechanism actually helps?
     "adaptive-no-replication": lambda **kw: AdaptiveScheduler(
         replication=False, name="adaptive-no-replication", **kw),
@@ -34,5 +70,6 @@ def make_scheduler(name: str, **kw) -> Scheduler:
 
 __all__ = [
     "AdaptiveScheduler", "Assignment", "BASELINES", "Decision", "EFTRetry", "HEFT", "LeastLoaded",
-    "REGISTRY", "RoundRobin", "Scheduler", "StaticReplication", "heft_plan", "make_scheduler",
+    "PolicyScheduler", "REGISTRY", "RoundRobin", "Scheduler", "StaticReplication", "heft_plan",
+    "make_scheduler",
 ]

@@ -1,0 +1,19 @@
+{
+  "name": "demo-pipeline",
+  "deadline": 70,
+  "tasks": [
+    {"id": "ingest",      "type": "sleep",         "work": 6,  "parents": []},
+    {"id": "clean_a",     "type": "cpu_benchmark", "work": 8,  "parents": ["ingest"]},
+    {"id": "clean_b",     "type": "hash_payload",  "work": 8,  "parents": ["ingest"],
+     "payload": {"data": "sensor-batch-0042", "rounds": 5000}},
+    {"id": "clean_c",     "type": "cpu_benchmark", "work": 6,  "parents": ["ingest"]},
+    {"id": "features",    "type": "cpu_benchmark", "work": 10, "parents": ["clean_a", "clean_b"]},
+    {"id": "validate",    "type": "fail_once",     "work": 6,  "parents": ["clean_c"],
+     "payload": {"fail_on_attempt": 1}},
+    {"id": "train",       "type": "cpu_benchmark", "work": 12, "parents": ["features", "validate"]},
+    {"id": "evaluate",    "type": "sleep",         "work": 6,  "parents": ["train"]},
+    {"id": "report",      "type": "hash_payload",  "work": 4,  "parents": ["train"],
+     "payload": {"data": "metrics-summary", "rounds": 2000}},
+    {"id": "publish",     "type": "sleep",         "work": 3,  "parents": ["evaluate", "report"]}
+  ]
+}

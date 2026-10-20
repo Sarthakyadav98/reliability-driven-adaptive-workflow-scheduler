@@ -93,6 +93,72 @@ def demo_workflow() -> Workflow:
     return Workflow.from_edges([float(w) for w in works], edges, name="demo-12")
 
 
+def load_workflow_json(path_or_dict, allowed_types: set[str] | None = None) -> Workflow:
+    """Load and validate a workflow from JSON (a path or an already-parsed dict).
+
+    Schema::
+
+        {"name": "demo", "deadline": 120,
+         "tasks": [{"id": "fetch", "type": "sleep", "work": 10, "parents": [], "payload": {}}]}
+
+    ``work`` is in abstract work units (duration = work / worker speed). Rejects
+    duplicate ids, unknown or self parents, cycles, non-positive work and task
+    types outside ``allowed_types`` (default: the worker agents' registry).
+    """
+    import json
+    from pathlib import Path
+
+    if isinstance(path_or_dict, dict):
+        spec = path_or_dict
+    else:
+        spec = json.loads(Path(path_or_dict).read_text(encoding="utf-8"))
+    if allowed_types is None:
+        from .workers.task_registry import TASK_TYPES
+
+        allowed_types = set(TASK_TYPES)
+    tasks = spec.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        raise ValueError("workflow JSON needs a non-empty 'tasks' list")
+    index: dict[str, int] = {}
+    for i, t in enumerate(tasks):
+        tid = t.get("id")
+        if not isinstance(tid, str) or not tid:
+            raise ValueError(f"task #{i} needs a non-empty string 'id'")
+        if tid in index:
+            raise ValueError(f"duplicate task id {tid!r}")
+        index[tid] = i
+    works, edges, names, types, payloads = [], [], [], [], []
+    for t in tasks:
+        tid = t["id"]
+        work = t.get("work")
+        if not isinstance(work, (int, float)) or work <= 0:
+            raise ValueError(f"task {tid!r}: 'work' must be a positive number")
+        ttype = t.get("type", "sleep")
+        if ttype not in allowed_types:
+            raise ValueError(f"task {tid!r}: type {ttype!r} not allowed (allowed: {sorted(allowed_types)})")
+        parents = t.get("parents", [])
+        if len(set(parents)) != len(parents):
+            raise ValueError(f"task {tid!r} lists a parent twice")
+        for p in parents:
+            if p == tid:
+                raise ValueError(f"task {tid!r} depends on itself")
+            if p not in index:
+                raise ValueError(f"task {tid!r} depends on unknown task {p!r}")
+            edges.append((index[p], index[tid]))
+        payload = t.get("payload", {})
+        if not isinstance(payload, dict):
+            raise ValueError(f"task {tid!r}: 'payload' must be an object")
+        works.append(float(work))
+        names.append(tid)
+        types.append(ttype)
+        payloads.append(payload)
+    wf = Workflow.from_edges(works, edges, name=spec.get("name", "workflow"), names=names,
+                             types=types, payloads=payloads)  # raises on cycles
+    if spec.get("deadline") is not None:
+        wf.deadline = float(spec["deadline"])
+    return wf
+
+
 def upward_rank(wf: Workflow, mean_cost: list[float]) -> list[float]:
     """HEFT upward rank (Topcuoglu et al. 2002, eq. 7) with zero communication cost.
 

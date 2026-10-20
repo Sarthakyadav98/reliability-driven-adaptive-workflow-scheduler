@@ -26,7 +26,7 @@ from rdas.qubo import QuboSolver, brute_force, greedy, to_bqm
 from rdas.schedulers import AdaptiveScheduler, make_scheduler
 from rdas.schedulers.heft import heft_plan
 from rdas.viz import plot_dag, plot_gantt, plot_reliability
-from rdas.workers import demo_pool
+from rdas.pool import demo_pool
 from rdas.workflow import demo_workflow, layered_dag
 
 OUT = Path("results/demo")
@@ -85,7 +85,7 @@ def main() -> None:
         print(f"\n--- {name}: makespan {r.makespan:.1f} ({'met' if r.deadline_met else 'MISSED'} deadline), "
               f"lost attempts {r.n_failed_attempts}, replicas {r.n_replicas}")
         for t, msg in s.log:
-            if "CRASH" in msg or "lost" in msg:
+            if "UNAVAILABLE" in msg or "FAILED" in msg:
                 print(f"   t={t:6.1f}  {msg}")
         plot_gantt(s, OUT / f"04_{name}.png", f"{name} with W1 crashes")
 
@@ -93,20 +93,17 @@ def main() -> None:
     banner("5. Adaptive scheduler: monitor -> reliability estimate -> decision", a.quick)
     captured = []
     sched = AdaptiveScheduler(explain=True, seed=0)
-    original = sched._problem
 
-    def capture(view, batch, workers, avail):
-        prob = original(view, batch, workers, avail)
-        if len(batch) >= 3:
+    def capture(view, prob):
+        if prob.n >= 3:
             captured.append((view.now, prob))
-        return prob
 
-    sched._problem = capture
+    sched.placement.on_problem = capture  # see the exact decision-scoped problems it solves
     s = Simulation(wf, pool, sched, faults, seed=0, record=True)
     r = s.run()
     results["adaptive (cold)"] = r
     for t, msg in s.log:
-        if any(k in msg for k in ("->", "CRASH", "REPLICATE", "reassign", "withdrawn")):
+        if any(k in msg for k in ("->", "UNAVAILABLE", "REPLICA", "reassign", "withdrawn")):
             print(f"   t={t:6.1f}  {msg}")
     print("\nReliability estimate R (P(success) of an average task) after the run:")
     for row in s.estimator.snapshot(s.ref_duration):
@@ -133,7 +130,7 @@ def main() -> None:
     r = s.run()
     results["adaptive (warm)"] = r
     for t, msg in s.log:
-        if any(k in msg for k in ("->", "CRASH", "REPLICATE", "reassign", "withdrawn")):
+        if any(k in msg for k in ("->", "UNAVAILABLE", "REPLICA", "reassign", "withdrawn")):
             print(f"   t={t:6.1f}  {msg}")
     plot_gantt(s, OUT / "05_adaptive_warm.png", "adaptive (with history) with W1 crashes")
     plot_reliability(s, OUT / "05_reliability_warm.png", "Estimated reliability, with history")
@@ -143,7 +140,8 @@ def main() -> None:
     print(f"{'scheduler':<18}{'makespan':>10}{'deadline':>10}{'lost':>6}{'replicas':>10}{'wasted':>8}"
           f"{'res.ovh':>9}")
     for name, r in results.items():
-        print(f"{name:<18}{r.makespan:>10.1f}{('met' if r.deadline_met else 'MISSED'):>10}"
+        mk = f"{r.makespan:>10.1f}" if r.completed else f"{'FAILED':>10}"
+        print(f"{name:<18}{mk}{('met' if r.deadline_met else 'MISSED'):>10}"
               f"{r.n_failed_attempts:>6}{r.n_replicas:>10}{r.wasted_time:>8.1f}{r.resource_overhead:>9.2f}")
     print("\n(Statistical comparison over many seeds and failure rates: python -m rdas.experiments)")
 
@@ -160,17 +158,19 @@ def main() -> None:
         print(f"  T{t:<3}" + "".join(f"{prob.c[i, j]:8.2f}" for j in range(prob.m)))
     bqm = to_bqm(prob)
     print(f"QUBO: {len(bqm.variables)} variables, {len(bqm.quadratic)} quadratic terms, "
-          f"one-hot penalty A={prob.penalty_weight():.2f}")
+          f"copy-count penalty A={prob.penalty_weight():.2f}, copies k={prob.k}")
     g = greedy(prob)
     sa, info = QuboSolver(num_reads=50, num_sweeps=1000, seed=1).solve(prob)
     ex = brute_force(prob)
 
     def fmt(assign):
-        return ", ".join(f"T{prob.tasks[i]}->W{prob.workers[j]}" for i, j in enumerate(assign))
+        sets = prob._sets(assign)
+        return ", ".join(f"T{prob.tasks[i]}->" + "+".join(f"W{prob.workers[j]}" for j in js)
+                         for i, js in enumerate(sets))
 
     print(f"  greedy (classical) : {fmt(g)}   cost {prob.energy(g):.3f}")
     print(f"  QUBO + SA          : {fmt(sa)}   cost {prob.energy(sa):.3f}  ({info.seconds * 1000:.1f} ms,"
-          f" {info.violations} constraint violations)")
+          f" {"feasible" if info.feasible else "INFEASIBLE, repaired"})")
     print(f"  exact (brute force): {fmt(ex)}   cost {prob.energy(ex):.3f}")
     print("\nSame objective, three interchangeable backends. No quantum advantage is claimed: "
           "RQ2 measures quality vs solve time as the problem grows (scripts/qubo_benchmark.py).")

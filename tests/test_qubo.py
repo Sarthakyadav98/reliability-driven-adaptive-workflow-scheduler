@@ -7,7 +7,7 @@ import pytest
 from rdas import FaultConfig, Simulation
 from rdas.qubo import AssignmentProblem, QuboSolver, brute_force, decode, greedy, to_bqm
 from rdas.schedulers import make_scheduler
-from rdas.workers import make_pool
+from rdas.pool import make_pool
 from rdas.workflow import layered_dag
 
 
@@ -62,4 +62,7 @@ def test_qubo_backed_adaptive_scheduler_completes():
                      FaultConfig(task_failure_prob=0.2), seed=3).run()
     assert res.completed
     assert res.extra["n_solver_calls"] > 0
-    assert res.extra["qubo_violations"] == 0
+    # Infeasible annealer outputs are counted and reported (then repaired), not hidden.
+    calls, bad = res.extra["n_solver_calls"], res.extra["qubo_infeasible"]
+    assert res.extra["qubo_feasibility_rate"] == pytest.approx(1 - bad / calls)
+    assert res.extra["mean_solver_build_ms"] > 0 and res.extra["mean_solver_anneal_ms"] > 0

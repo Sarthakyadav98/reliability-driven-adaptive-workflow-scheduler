@@ -7,7 +7,7 @@ from rdas import EMAEstimator, FaultConfig, FaultTrace, GammaPoissonEstimator, S
 from rdas.models import Workflow
 from rdas.schedulers import REGISTRY, make_scheduler
 from rdas.schedulers.heft import _earliest_slot, heft_plan
-from rdas.workers import demo_pool, make_pool
+from rdas.pool import demo_pool, make_pool
 from rdas.workflow import criticality, demo_workflow, fork_join, layered_dag, upward_rank
 
 
