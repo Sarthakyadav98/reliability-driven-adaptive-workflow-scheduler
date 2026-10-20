@@ -11,6 +11,7 @@
   --accent: #2c55c9; --accent-soft: #dfe7fb; --ok: #2b8a5a; --ok-soft: #dcefe4; --bad: #c4432c; --bad-soft: #f8e1dc;
   --warn: #b26b00; --warn-soft: #f8ead2;
   --s1: #2c55c9; --s2: #c4432c; --s3: #1f8a7a; --s4: #b26b00; --s5: #7a4fc9; --s6: #5d6877;
+  --s7: #b0337f; --s8: #3f7f2a; --s9: #0f7ea6; --s10: #8a5a2b; --s11: #4b4fa8;
   --font-ui: "Segoe UI", "Helvetica Neue", system-ui, -apple-system, Arial, sans-serif;
   --font-mono: "Cascadia Mono", "SF Mono", Consolas, "Liberation Mono", monospace;
   color-scheme: light;
@@ -20,14 +21,16 @@
     --bg: #0f141a; --panel: #161d26; --ink: #e6ebf2; --muted: #98a3b3; --line: #2a3442; --grid: #1f2833;
     --accent: #7f9dff; --accent-soft: #23305a; --ok: #5fcf95; --ok-soft: #173a29; --bad: #ff8a72; --bad-soft: #43231d;
     --warn: #f1b75e; --warn-soft: #3d2d12;
-    --s1: #7f9dff; --s2: #ff8a72; --s3: #4fc7b3; --s4: #f1b75e; --s5: #b79bff; --s6: #98a3b3; color-scheme: dark;
+    --s1: #7f9dff; --s2: #ff8a72; --s3: #4fc7b3; --s4: #f1b75e; --s5: #b79bff; --s6: #98a3b3;
+    --s7: #f28cc8; --s8: #8fd27a; --s9: #6cc6e8; --s10: #d6a774; --s11: #a9adff; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #0f141a; --panel: #161d26; --ink: #e6ebf2; --muted: #98a3b3; --line: #2a3442; --grid: #1f2833;
   --accent: #7f9dff; --accent-soft: #23305a; --ok: #5fcf95; --ok-soft: #173a29; --bad: #ff8a72; --bad-soft: #43231d;
   --warn: #f1b75e; --warn-soft: #3d2d12;
-  --s1: #7f9dff; --s2: #ff8a72; --s3: #4fc7b3; --s4: #f1b75e; --s5: #b79bff; --s6: #98a3b3; color-scheme: dark;
+  --s1: #7f9dff; --s2: #ff8a72; --s3: #4fc7b3; --s4: #f1b75e; --s5: #b79bff; --s6: #98a3b3;
+    --s7: #f28cc8; --s8: #8fd27a; --s9: #6cc6e8; --s10: #d6a774; --s11: #a9adff; color-scheme: dark;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -79,6 +82,19 @@ main { max-width: 1800px; margin: 0 auto; padding: 16px; }
 .sched input { grid-row: span 2; margin-top: 3px; accent-color: var(--accent); }
 .sched b { font-family: var(--font-mono); font-size: 0.85rem; }
 .sched span { color: var(--muted); font-size: 0.78rem; }
+.group { display: grid; gap: 4px; }
+.group + .group, .group + details, details + .group { margin-top: 8px; }
+.group-head { display: grid; gap: 0; padding: 0 2px; }
+.group-head b { font-size: 0.8rem; }
+.group-head span { color: var(--muted); font-size: 0.74rem; }
+.group.ours .sched { border-left: 3px solid var(--accent); }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.presets button { font-size: 0.78rem; padding: 4px 9px; border-radius: 999px; }
+.chipgroup { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chipgroup + .chipgroup { margin-top: 6px; }
+.chipgroup > button.glabel { border: none; background: transparent; color: var(--muted); font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 4px; min-width: 10.5rem; text-align: left; }
+.chipgroup > button.glabel:hover { color: var(--accent); }
+tr.grouprow td { background: var(--bg); color: var(--muted); font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 5px 10px; }
 .sched:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
 .sched:has(input:disabled:not(:checked)) { opacity: 0.5; }
 .crash { display: grid; grid-template-columns: 1.3fr 1fr 1fr auto; gap: 6px; align-items: end; }
@@ -296,7 +312,7 @@ http://127.0.0.1:8003</textarea></div>
           <button data-v="warm" aria-pressed="false">Warm (2 prior)</button>
           <button data-v="degrade" aria-pressed="false">Degrading</button>
         </div></div>
-      <div class="field" style="flex:1"><span class="lbl">Baselines</span><div class="chips" id="r-base"></div></div>
+      <div class="field" style="flex:1 1 100%"><span class="lbl">Baselines <span class="hint" style="font-weight:400">(click a group name to toggle the whole group)</span></span><div id="r-base"></div></div>
     </div>
     <div class="chart" id="r-chart"></div>
     <div class="hint">Paired % change in makespan; below 0 = adaptive faster. Bars: 95% CI. Filled points: CI excludes 0.</div>
@@ -330,7 +346,14 @@ http://127.0.0.1:8003</textarea></div>
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const fmt = (x, d = 1) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : Number(x).toFixed(d);
   let META = null;
-  const PRIMARY = ["eft-retry", "replicate-2", "eft-threshold", "heft", "adaptive", "adaptive-qubo"];
+  // Quick comparisons for the scheduler pickers (at most four schedulers each).
+  const PRESETS = [
+    ["Ours vs basic", ["round-robin", "least-loaded", "eft-retry", "adaptive"]],
+    ["Ours vs fault tolerance", ["eft-retry", "replicate-2", "eft-threshold", "adaptive"]],
+    ["Static vs dynamic", ["heft", "eft-retry", "adaptive"]],
+    ["Greedy vs QUBO", ["eft-retry", "adaptive", "adaptive-qubo"]],
+    ["Ablations", ["reliability-heft", "adaptive", "adaptive-no-reassign", "adaptive-no-replication"]],
+  ];
 
   // ---------------------------------------------------------------- theme + tabs
   const root = document.documentElement;
@@ -373,12 +396,27 @@ http://127.0.0.1:8003</textarea></div>
     const item = (s) => `
       <label class="sched"><input type="checkbox" value="${esc(s.name)}"${defaults.includes(s.name) ? " checked" : ""}>
         <b>${esc(s.name)}</b><span>${esc(s.info)}</span></label>`;
-    host.innerHTML = PRIMARY.map((n) => META.schedulers.find((s) => s.name === n)).filter(Boolean).map(item).join("");
+    const byName = Object.fromEntries(META.schedulers.map((s) => [s.name, s]));
+    const group = (g) => `<div class="group ${esc(g.id)}"><div class="group-head"><b>${esc(g.title)}</b><span>${esc(g.hint)}</span></div>
+      ${g.members.filter((n) => byName[n]).map((n) => item(byName[n])).join("")}</div>`;
+    const presets = `<div class="presets" aria-label="Quick comparisons">${PRESETS.map(([t], i) =>
+      `<button type="button" data-preset="${i}">${esc(t)}</button>`).join("")}</div>`;
+    host.innerHTML = presets + META.groups.map((g) => g.id === "ablation"
+      ? `<details${g.members.some((n) => defaults.includes(n)) ? " open" : ""}><summary class="hint" style="cursor:pointer;padding:2px">${esc(g.title)}: ${esc(g.hint)} (${g.members.length})</summary>${group(g)}</details>`
+      : group(g)).join("");
     const limit = () => {
       const boxes = [...host.querySelectorAll("input")], n = boxes.filter((b) => b.checked).length;
       boxes.forEach((b) => (b.disabled = !b.checked && n >= META.limits.schedulers));
     };
-    host.addEventListener("change", limit); limit();
+    host.addEventListener("change", limit);
+    host.addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-preset]"); if (!b) return;
+      const want = PRESETS[+b.dataset.preset][1];
+      host.querySelectorAll("input").forEach((x) => (x.checked = want.includes(x.value)));
+      const det = host.querySelector("details"); if (det && want.some((n) => META.groups.find((g) => g.id === "ablation").members.includes(n))) det.open = true;
+      limit();
+    });
+    limit();
     return () => [...host.querySelectorAll("input:checked")].map((b) => b.value);
   }
   function crashEditor(hostId, addId, workerCount, initial) {
@@ -555,9 +593,14 @@ http://127.0.0.1:8003</textarea></div>
 
   // ---------------------------------------------------------------- held-out results
   let RESULTS = null, getScn, rP = 0.3;
-  const BASES = [["eft-retry", "--s1"], ["replicate-2", "--s2"], ["heft", "--s4"], ["eft-threshold", "--s3"],
-    ["reliability-heft", "--s5"], ["adaptive-qubo", "--s6"]];
-  const TABLE_ORDER = BASES.map(([b]) => b).concat(["least-loaded", "round-robin", "adaptive-no-reassign", "adaptive-no-replication", "adaptive-threshold"]);
+  // Every comparison target gets its own colour; order follows the scheduler families.
+  const COLOR = { "round-robin": "--s7", "least-loaded": "--s8", "heft": "--s4", "eft-retry": "--s1", "replicate-2": "--s2",
+    "eft-threshold": "--s3", "adaptive-qubo": "--s9", "reliability-heft": "--s5", "adaptive-no-reassign": "--s10",
+    "adaptive-no-replication": "--s6", "adaptive-threshold": "--s11" };
+  const resultGroups = () => META.groups.map((g) => ({ ...g, members: g.members.filter((n) => n !== "adaptive") }))
+    .filter((g) => g.members.length);
+  const TABLE_ORDER = () => resultGroups().flatMap((g) => g.members);
+  const BASES = Object.entries(COLOR);
   const LABEL = { "eft-retry": "EFT-retry", "replicate-2": "Replicate-2", "heft": "Static HEFT", "eft-threshold": "Threshold FT",
     "reliability-heft": "Reliability term only", "least-loaded": "Least-loaded", "round-robin": "Round Robin", "adaptive-qubo": "Adaptive QUBO",
     "adaptive-no-reassign": "Ablation: no reassignment", "adaptive-no-replication": "Ablation: no replication", "adaptive-threshold": "Ablation: threshold FT rule" };
@@ -567,12 +610,23 @@ http://127.0.0.1:8003</textarea></div>
     if (!RESULTS.rows.length) { $("r-chart").innerHTML = '<div class="hint">docs/paired_vs_baselines.csv not found.</div>'; return; }
     $("r-src").textContent = "Source: " + RESULTS.source + " (scripts/paired_stats.py on the held-out runs).";
     const avail = new Set(RESULTS.rows.map((r) => r.vs));
-    $("r-base").innerHTML = BASES.filter(([b]) => avail.has(b)).map(([b, c]) =>
-      `<button class="chip" data-b="${b}" aria-pressed="${shownBases.has(b)}"><i style="background:var(${c})"></i>${LABEL[b] || b}</button>`).join("");
+    $("r-base").innerHTML = resultGroups().map((g, gi) => {
+      const ms = g.members.filter((b) => avail.has(b));
+      return ms.length ? `<div class="chipgroup"><button class="glabel" data-g="${gi}" title="Toggle the whole group">${esc(g.id === "ours" ? "Ours (vs greedy)" : g.title)}</button>${ms.map((b) =>
+        `<button class="chip" data-b="${b}" aria-pressed="${shownBases.has(b)}"><i style="background:var(${COLOR[b]})"></i>${LABEL[b] || b}</button>`).join("")}</div>` : "";
+    }).join("");
     $("r-base").addEventListener("click", (e) => {
-      const b = e.target.closest("button"); if (!b) return;
-      shownBases.has(b.dataset.b) ? shownBases.delete(b.dataset.b) : shownBases.add(b.dataset.b);
-      b.setAttribute("aria-pressed", shownBases.has(b.dataset.b)); drawChart();
+      const gl = e.target.closest("button.glabel");
+      if (gl) {
+        const ms = resultGroups()[+gl.dataset.g].members.filter((b) => avail.has(b));
+        const on = !ms.every((b) => shownBases.has(b));
+        ms.forEach((b) => (on ? shownBases.add(b) : shownBases.delete(b)));
+      } else {
+        const b = e.target.closest("button.chip"); if (!b) return;
+        shownBases.has(b.dataset.b) ? shownBases.delete(b.dataset.b) : shownBases.add(b.dataset.b);
+      }
+      $("r-base").querySelectorAll("button.chip").forEach((c) => c.setAttribute("aria-pressed", shownBases.has(c.dataset.b)));
+      drawChart();
     });
     const ps = [...new Set(RESULTS.rows.map((r) => r.p))].sort((a, b) => a - b);
     $("r-p").innerHTML = ps.map((p) => `<button data-v="${p}" aria-pressed="${p === rP}">p = ${p}</button>`).join("");
@@ -629,9 +683,13 @@ http://127.0.0.1:8003</textarea></div>
   function drawTable() {
     if (!RESULTS || !getScn) return;
     const scn = getScn(), rows = RESULTS.rows.filter((r) => r.scenario === scn && r.p === rP);
-    rows.sort((a, b) => TABLE_ORDER.indexOf(a.vs) - TABLE_ORDER.indexOf(b.vs));
+    const order = TABLE_ORDER();
+    rows.sort((a, b) => order.indexOf(a.vs) - order.indexOf(b.vs));
+    const groupOf = (vs) => resultGroups().find((g) => g.members.includes(vs))?.id;
+    const titleOf = (id) => resultGroups().find((g) => g.id === id)?.title || "Other";
     const pct = (a) => `${fmt(100 * a, 0)}%`;
-    $("r-table").innerHTML = `<thead><tr><th>Adaptive vs</th><th>Makespan change</th><th>Adaptive wins</th><th>Completed (A / base)</th><th>Deadline met (A / base)</th><th>Wasted / useful (A / base)</th><th>Pairs</th></tr></thead><tbody>${rows.map((r) => `
+    $("r-table").innerHTML = `<thead><tr><th>Adaptive vs</th><th>Makespan change</th><th>Adaptive wins</th><th>Completed (A / base)</th><th>Deadline met (A / base)</th><th>Wasted / useful (A / base)</th><th>Pairs</th></tr></thead><tbody>${rows.map((r, i) => `${!i || groupOf(rows[i - 1].vs) !== groupOf(r.vs)
+      ? `<tr class="grouprow"><td colspan="7">${esc(titleOf(groupOf(r.vs)))}</td></tr>` : ""}
       <tr><td><b>${esc(LABEL[r.vs] || r.vs)}</b> <span class="hint mono">${esc(r.vs)}</span></td>
       <td class="${r.sig && r.mean < 0 ? "best" : ""}">${r.mean > 0 ? "+" : ""}${fmt(r.mean)}% ± ${fmt(r.ci)}${r.sig ? "" : ' <span class="hint">n.s.</span>'}</td>
       <td>${pct(r.win)}</td><td>${pct(r.succ_a)} / ${pct(r.succ_b)}</td><td>${pct(r.dl_a)} / ${pct(r.dl_b)}</td>

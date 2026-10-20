@@ -32,6 +32,12 @@ def test_simulate_rejects_empty_scheduler_list():
         studio.simulate({"preset": "demo", "schedulers": ["no-such-scheduler"]})
 
 
+def test_scheduler_groups_cover_the_registry_exactly_once():
+    from rdas.schedulers import REGISTRY
+    members = [n for g in studio.GROUPS for n in g["members"]]
+    assert sorted(members) == sorted(REGISTRY)
+
+
 def test_held_out_results_load_from_docs():
     rows = studio.held_out_results()["rows"]
     heft = [r for r in rows if r["scenario"] == "cold" and r["vs"] == "heft" and r["p"] == 0.3]

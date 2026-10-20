@@ -60,6 +60,18 @@ SCHEDULER_INFO = {
     "adaptive-no-reassign": "Ablation: adaptive without reassignment",
 }
 
+# Scheduler families, shared by the pickers and the results view. Every registered scheduler is in exactly one.
+GROUPS = [
+    {"id": "basic", "title": "Basic schedulers", "hint": "one copy per task, plain retry",
+     "members": ["round-robin", "least-loaded", "heft", "eft-retry"]},
+    {"id": "ft", "title": "Fault-tolerance baselines", "hint": "fixed replication rules",
+     "members": ["replicate-2", "eft-threshold"]},
+    {"id": "ours", "title": "Ours: adaptive", "hint": "reliability-driven placement, replication and reassignment",
+     "members": ["adaptive", "adaptive-qubo"]},
+    {"id": "ablation", "title": "Ablations", "hint": "the adaptive scheduler with one part changed or removed",
+     "members": ["reliability-heft", "adaptive-no-reassign", "adaptive-no-replication", "adaptive-threshold"]},
+]
+
 LIMITS = {"n_tasks": (5, 120), "n_workers": (2, 10), "failure_prob": (0.0, 0.5), "schedulers": 4, "crashes": 20}
 
 
@@ -303,6 +315,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
         if path == "/api/meta":
             return self._json({"schedulers": [{"name": n, "info": SCHEDULER_INFO.get(n, "")} for n in REGISTRY],
+                               "groups": GROUPS,
                                "demo_workers": [{"id": w.id, "label": w.label, "speed": w.speed}
                                                 for w in demo_pool()],
                                "recordings": recordings(), "limits": LIMITS})
