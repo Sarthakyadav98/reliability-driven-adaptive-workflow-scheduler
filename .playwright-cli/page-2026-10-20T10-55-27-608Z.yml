@@ -1,0 +1,11 @@
+- generic [active] [ref=e1]:
+  - main [ref=e5]:
+    - text:  
+    - generic [ref=e29]:
+      - generic [ref=e30]: Staff Management
+      - button "+ Add New Staff" [ref=e32] [cursor=pointer]
+  - iframe [ref=e26]:
+    - generic [ref=f2e2]:
+      - generic [ref=f2e3]: ERROR for site owner:Invalid domain for site key
+      - generic [ref=f2e7]: reCAPTCHA
+  - text: 

@@ -1,0 +1,73 @@
+- generic [active] [ref=e1]:
+  - main [ref=e5]:
+    - text:  
+    - generic [ref=e129]:
+      - generic [ref=e130]: ABOUT
+      - paragraph [ref=e134]:
+        - text: The Example Clinic demo application showcases using several Essential JS 2 Angular UI components together in a real-world application scenario. You can further explore the
+        - link "source code" [ref=e135] [cursor=pointer]:
+          - /url: https://github.com/syncfusion/ej2-showcase-angular-appointment-planner
+        - text: of this application and use it as a reference for integrating Essential JS 2 Angular UI components into your applications.
+      - generic [ref=e136]: List of EJ2 Angular UI components used in this sample
+      - generic [ref=e137]:
+        - generic [ref=e138]:
+          - generic [ref=e139]: 
+          - link "CheckBox" [ref=e140] [cursor=pointer]:
+            - /url: https://ej2.syncfusion.com/angular/documentation/check-box/getting-started
+        - generic [ref=e141]:
+          - generic [ref=e142]: 
+          - link "Dialog" [ref=e143] [cursor=pointer]:
+            - /url: http://ej2.syncfusion.com/angular/documentation/dialog/getting-started.html
+        - generic [ref=e144]:
+          - generic [ref=e145]: 
+          - link "TextBox" [ref=e146] [cursor=pointer]:
+            - /url: http://ej2.syncfusion.com/angular/documentation/textbox/getting-started.html
+        - generic [ref=e147]:
+          - generic [ref=e148]: 
+          - link "DropDownList" [ref=e149] [cursor=pointer]:
+            - /url: http://ej2.syncfusion.com/angular/documentation/drop-down-list/getting-started.html
+        - generic [ref=e150]:
+          - generic [ref=e151]: 
+          - link "DatePicker" [ref=e152] [cursor=pointer]:
+            - /url: http://ej2.syncfusion.com/angular/documentation/datepicker/getting-started.html
+        - generic [ref=e153]:
+          - generic [ref=e154]: 
+          - link "Button" [ref=e155] [cursor=pointer]:
+            - /url: http://ej2.syncfusion.com/angular/documentation/button/getting-started.html
+        - generic [ref=e156]:
+          - generic [ref=e157]: 
+          - link "Schedule" [ref=e158] [cursor=pointer]:
+            - /url: http://ej2.syncfusion.com/angular/documentation/schedule/getting-started.html
+        - generic [ref=e159]:
+          - generic [ref=e160]: 
+          - link "TreeView" [ref=e161] [cursor=pointer]:
+            - /url: https://ej2.syncfusion.com/angular/documentation/treeview/getting-started
+        - generic [ref=e162]:
+          - generic [ref=e163]: 
+          - link "Toast" [ref=e164] [cursor=pointer]:
+            - /url: http://ej2.syncfusion.com/angular/documentation/toast/getting-started.html
+        - generic [ref=e165]:
+          - generic [ref=e166]: 
+          - link "Grid" [ref=e167] [cursor=pointer]:
+            - /url: http://ej2.syncfusion.com/angular/documentation/grid/getting-started.html
+        - generic [ref=e168]:
+          - generic [ref=e169]: 
+          - link "Chart how code gpt helps me" [ref=e170] [cursor=pointer]:
+            - /url: http://ej2.syncfusion.com/angular/documentation/chart/getting-started.html
+        - generic [ref=e171]:
+          - generic [ref=e172]: 
+          - link "TimePicker" [ref=e173] [cursor=pointer]:
+            - /url: http://ej2.syncfusion.com/angular/documentation/timepicker/getting-started.html
+        - generic [ref=e174]:
+          - generic [ref=e175]: 
+          - link "Sidebar" [ref=e176] [cursor=pointer]:
+            - /url: http://ej2.syncfusion.com/angular/documentation/sidebar/getting-started.html
+        - generic [ref=e177]:
+          - generic [ref=e178]: 
+          - link "ListView" [ref=e179] [cursor=pointer]:
+            - /url: http://ej2.syncfusion.com/angular/documentation/list-view/getting-started.html
+  - iframe [ref=e26]:
+    - generic [ref=f2e2]:
+      - generic [ref=f2e3]: ERROR for site owner:Invalid domain for site key
+      - generic [ref=f2e7]: reCAPTCHA
+  - text: 

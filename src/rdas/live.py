@@ -27,6 +27,7 @@ from pathlib import Path
 
 from .backends.http import HttpBackend, crash_worker, discover_workers, wait_until_healthy
 from .engine import Engine, default_estimator, default_ref_duration
+from .export import write_run
 from .schedulers import make_scheduler
 from .workflow import load_workflow_json
 
@@ -85,6 +86,8 @@ def run_live(workflow_path: str, urls: list[str], scheduler: str, seconds_per_un
         row["workers"] = [{"index": w.id, "label": w.label, "speed": w.speed} for w in workers]
         row["final_reliability"] = est.snapshot(ref)
         (out / "metrics.json").write_text(json.dumps(row, indent=2, default=str), encoding="utf-8")
+        chaos_txt = ", ".join(f"W{w} down at t={t:g} for {d:g}" for w, t, d in chaos or []) or "no scripted crash"
+        write_run(out / "run.json", engine, res, scenario=f"real workers ({len(urls)}); {chaos_txt}")
     return res, engine
 
 

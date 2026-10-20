@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Schedule Replay</title>
+<style>
+/* Layout: control bar on top; runs side by side (Gantt + worker health, task graph, decision feed); final comparison table below.
+   System fonts only, so the page works offline on a projector laptop. */
+:root {
+  --bg: #f4f6f9; --panel: #ffffff; --ink: #141b24; --muted: #5d6877; --line: #d9dee6; --grid: #eceff4;
+  --accent: #2c55c9; --accent-soft: #dfe7fb;
+  --ok: #2b8a5a; --ok-soft: #dcefe4; --bad: #c4432c; --bad-soft: #f8e1dc;
+  --warn: #b26b00; --warn-soft: #f8ead2; --idle: #b9c1cc; --down: #8b95a3;
+  --font-ui: "Segoe UI", "Helvetica Neue", system-ui, -apple-system, Arial, sans-serif;
+  --font-mono: "Cascadia Mono", "SF Mono", Consolas, "Liberation Mono", monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --panel: #161d26; --ink: #e6ebf2; --muted: #98a3b3; --line: #2a3442; --grid: #1f2833;
+    --accent: #7f9dff; --accent-soft: #23305a; --ok: #5fcf95; --ok-soft: #173a29; --bad: #ff8a72; --bad-soft: #43231d;
+    --warn: #f1b75e; --warn-soft: #3d2d12; --idle: #3b4656; --down: #6d7887; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --panel: #161d26; --ink: #e6ebf2; --muted: #98a3b3; --line: #2a3442; --grid: #1f2833;
+  --accent: #7f9dff; --accent-soft: #23305a; --ok: #5fcf95; --ok-soft: #173a29; --bad: #ff8a72; --bad-soft: #43231d;
+  --warn: #f1b75e; --warn-soft: #3d2d12; --idle: #3b4656; --down: #6d7887; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 15px; line-height: 1.45; }
+.page { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 16px 40px; display: grid; gap: 16px; max-width: 1800px; margin: 0 auto; }
+h1 { font-size: 1.35rem; margin: 0; text-wrap: balance; }
+h2 { font-size: 1.05rem; margin: 0; }
+.sub { color: var(--muted); font-size: 0.9rem; }
+.mono, .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* control bar */
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+.bar .grow { flex: 1 1 260px; display: flex; align-items: center; gap: 10px; min-width: 0; }
+button, select { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 6px 11px; cursor: pointer; }
+button:hover, select:hover { border-color: var(--accent); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; min-width: 5.5rem; font-weight: 600; }
+input[type=range] { flex: 1; min-width: 120px; accent-color: var(--accent); }
+.clock { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 1.05rem; min-width: 8.5rem; text-align: right; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { font-size: 0.8rem; padding: 4px 9px; border-radius: 999px; }
+.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+
+/* runs */
+.runs { display: grid; gap: 16px; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); }
+.run { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 12px; min-width: 0; align-content: start; }
+.run-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 14px; align-items: baseline; }
+.run-head select { font-weight: 700; font-size: 1rem; }
+.status { font-family: var(--font-mono); font-size: 0.8rem; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.status.running { background: var(--accent-soft); color: var(--accent); }
+.status.met { background: var(--ok-soft); color: var(--ok); }
+.status.missed { background: var(--warn-soft); color: var(--warn); }
+.status.failed { background: var(--bad-soft); color: var(--bad); }
+.counters { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.counter { border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; min-width: 0; }
+.counter b { display: block; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 1.15rem; }
+.counter span { color: var(--muted); font-size: 0.75rem; }
+.chart { overflow-x: auto; }
+.chart svg { display: block; width: 100%; min-width: 520px; height: auto; }
+.dag svg { display: block; width: 100%; height: auto; max-height: 320px; }
+svg text { fill: var(--ink); font-family: var(--font-ui); }
+svg .tick { fill: var(--muted); font-family: var(--font-mono); font-size: 11px; }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.box { border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-width: 0; display: grid; gap: 6px; align-content: start; }
+.box h3 { margin: 0; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.feed { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; font-size: 0.84rem; display: grid; gap: 2px; }
+.feed li { display: grid; grid-template-columns: 4.2rem minmax(0, 1fr); gap: 8px; padding: 3px 6px; border-radius: 5px; }
+.feed li .t { font-family: var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.feed li.fail { background: var(--bad-soft); }
+.feed li.repl { background: var(--warn-soft); }
+.feed li.move { background: var(--accent-soft); }
+.feed li.dec .m { font-weight: 600; }
+.feed li.quiet .m { color: var(--muted); }
+.feed li.fresh { outline: 2px solid var(--accent); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.8rem; color: var(--muted); }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 5px; }
+
+/* comparison */
+.compare { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 10px; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+thead th { color: var(--muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+td.best { color: var(--ok); font-weight: 700; }
+.note { color: var(--muted); font-size: 0.82rem; }
+
+@media (max-width: 1100px) { .runs { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) {
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .counters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<script id="rdas-data" type="application/json">{"runs": [{"format": "rdas-run/1", "label": "eft-retry (reliability-blind retry)", "scheduler": "eft-retry", "scenario": "W1 (fast, flaky) crashes every 20 time units from t=8, down 10 units each time", "end_time": 64.5, "workflow": {"name": "demo-12", "deadline": 59.3, "tasks": [{"id": 0, "label": "T0", "work": 10.0, "type": "sleep", "preds": []}, {"id": 1, "label": "T1", "work": 14.0, "type": "sleep", "preds": [0]}, {"id": 2, "label": "T2", "work": 8.0, "type": "sleep", "preds": [0]}, {"id": 3, "label": "T3", "work": 12.0, "type": "sleep", "preds": [0]}, {"id": 4, "label": "T4", "work": 16.0, "type": "sleep", "preds": [1]}, {"id": 5, "label": "T5", "work": 9.0, "type": "sleep", "preds": [1, 2]}, {"id": 6, "label": "T6", "work": 11.0, "type": "sleep", "preds": [2, 3]}, {"id": 7, "label": "T7", "work": 13.0, "type": "sleep", "preds": [3]}, {"id": 8, "label": "T8", "work": 7.0, "type": "sleep", "preds": [4, 5]}, {"id": 9, "label": "T9", "work": 15.0, "type": "sleep", "preds": [5, 6]}, {"id": 10, "label": "T10", "work": 10.0, "type": "sleep", "preds": [7]}, {"id": 11, "label": "T11", "work": 6.0, "type": "sleep", "preds": [8, 9, 10]}]}, "workers": [{"id": 0, "label": "steady", "speed": 1.0}, {"id": 1, "label": "fast-flaky", "speed": 1.5}, {"id": 2, "label": "slow-reliable", "speed": 0.8}, {"id": 3, "label": "fast", "speed": 1.2}], "attempts": [{"attempt": 0, "task": "T0", "task_id": 0, "worker": 1, "kind": "primary", "queued_at": 0.0, "start": 0.0, "end": 6.666666666666667, "outcome": "success", "category": null, "expected_duration": 6.666666666666667, "actual_duration": 6.666666666666667, "est_p_success": 0.9301726293597599, "reason": "single copy"}, {"attempt": 1, "task": "T1", "task_id": 1, "worker": 1, "kind": "primary", "queued_at": 6.666666666666667, "start": 6.666666666666667, "end": 8.0, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 9.333333333333334, "actual_duration": 1.333333333333333, "est_p_success": 0.9326886442660838, "reason": "single copy"}, {"attempt": 2, "task": "T3", "task_id": 3, "worker": 3, "kind": "primary", "queued_at": 6.666666666666667, "start": 6.666666666666667, "end": 16.666666666666668, "outcome": "success", "category": null, "expected_duration": 10.0, "actual_duration": 10.0, "est_p_success": 0.9280577976464107, "reason": "single copy"}, {"attempt": 3, "task": "T2", "task_id": 2, "worker": 0, "kind": "primary", "queued_at": 6.666666666666667, "start": 6.666666666666667, "end": 14.666666666666668, "outcome": "success", "category": null, "expected_duration": 8.0, "actual_duration": 8.0, "est_p_success": 0.9420197741578931, "reason": "single copy"}, {"attempt": 4, "task": "T1", "task_id": 1, "worker": 2, "kind": "primary", "queued_at": 8.0, "start": 8.0, "end": 25.5, "outcome": "success", "category": null, "expected_duration": 17.5, "actual_duration": 17.5, "est_p_success": 0.7650128010909384, "reason": "all copies failed: retry"}, {"attempt": 5, "task": "T6", "task_id": 6, "worker": 3, "kind": "primary", "queued_at": 16.666666666666668, "start": 16.666666666666668, "end": 25.833333333333336, "outcome": "success", "category": null, "expected_duration": 9.166666666666668, "actual_duration": 9.166666666666668, "est_p_success": 0.9012859223474607, "reason": "single copy"}, {"attempt": 6, "task": "T7", "task_id": 7, "worker": 0, "kind": "primary", "queued_at": 16.666666666666668, "start": 16.666666666666668, "end": 29.666666666666668, "outcome": "success", "category": null, "expected_duration": 13.0, "actual_duration": 13.0, "est_p_success": 0.8629526018068732, "reason": "single copy"}, {"attempt": 7, "task": "T5", "task_id": 5, "worker": 1, "kind": "primary", "queued_at": 25.5, "start": 25.5, "end": 28.0, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 6.0, "actual_duration": 2.5, "est_p_success": 0.8885301407847652, "reason": "single copy"}, {"attempt": 8, "task": "T4", "task_id": 4, "worker": 3, "kind": "primary", "queued_at": 25.5, "start": 25.833333333333336, "end": 39.16666666666667, "outcome": "success", "category": null, "expected_duration": 13.333333333333334, "actual_duration": 13.333333333333336, "est_p_success": 0.8951743791424194, "reason": "single copy"}, {"attempt": 9, "task": "T5", "task_id": 5, "worker": 0, "kind": "primary", "queued_at": 28.0, "start": 29.666666666666668, "end": 38.66666666666667, "outcome": "success", "category": null, "expected_duration": 9.0, "actual_duration": 9.000000000000004, "est_p_success": 0.8985762485773244, "reason": "all copies failed: retry"}, {"attempt": 10, "task": "T10", "task_id": 10, "worker": 2, "kind": "primary", "queued_at": 29.666666666666668, "start": 29.666666666666668, "end": 42.16666666666667, "outcome": "success", "category": null, "expected_duration": 12.5, "actual_duration": 12.500000000000004, "est_p_success": 0.8670578699879948, "reason": "single copy"}, {"attempt": 11, "task": "T9", "task_id": 9, "worker": 1, "kind": "primary", "queued_at": 38.66666666666667, "start": 38.66666666666667, "end": 48.0, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 10.0, "actual_duration": 9.333333333333329, "est_p_success": 0.7289244922663112, "reason": "single copy"}, {"attempt": 12, "task": "T8", "task_id": 8, "worker": 3, "kind": "primary", "queued_at": 39.16666666666667, "start": 39.16666666666667, "end": 45.00000000000001, "outcome": "success", "category": null, "expected_duration": 5.833333333333334, "actual_duration": 5.833333333333336, "est_p_success": 0.9479520445921601, "reason": "single copy"}, {"attempt": 13, "task": "T9", "task_id": 9, "worker": 3, "kind": "primary", "queued_at": 48.0, "start": 48.0, "end": 60.5, "outcome": "success", "category": null, "expected_duration": 12.5, "actual_duration": 12.5, "est_p_success": 0.8828870843349449, "reason": "all copies failed: retry"}, {"attempt": 14, "task": "T11", "task_id": 11, "worker": 1, "kind": "primary", "queued_at": 60.5, "start": 60.5, "end": 64.5, "outcome": "success", "category": null, "expected_duration": 4.0, "actual_duration": 4.0, "est_p_success": 0.8623166041166034, "reason": "single copy"}], "down": [[1, 8.0, 18.0], [1, 28.0, 38.0], [1, 48.0, 58.0]], "log": [[0.0, "T0 started on W1"], [6.666666666666667, "T0 succeeded on W1 (took 6.7)"], [6.666666666666667, "T2 started on W0"], [6.666666666666667, "T1 started on W1"], [6.666666666666667, "T3 started on W3"], [8.0, "W1 UNAVAILABLE (down until 18.0) - running T1 lost after 1.3"], [8.0, "T1 started on W2"], [14.666666666666668, "T2 succeeded on W0 (took 8.0)"], [16.666666666666668, "T3 succeeded on W3 (took 10.0)"], [16.666666666666668, "T7 started on W0"], [16.666666666666668, "T6 started on W3"], [18.0, "W1 available again"], [25.5, "T1 succeeded on W2 (took 17.5)"], [25.5, "T5 started on W1"], [25.833333333333336, "T6 succeeded on W3 (took 9.2)"], [25.833333333333336, "T4 started on W3"], [28.0, "W1 UNAVAILABLE (down until 38.0) - running T5 lost after 2.5"], [29.666666666666668, "T7 succeeded on W0 (took 13.0)"], [29.666666666666668, "T5 started on W0"], [29.666666666666668, "T10 started on W2"], [38.0, "W1 available again"], [38.66666666666667, "T5 succeeded on W0 (took 9.0)"], [38.66666666666667, "T9 started on W1"], [39.16666666666667, "T4 succeeded on W3 (took 13.3)"], [39.16666666666667, "T8 started on W3"], [42.16666666666667, "T10 succeeded on W2 (took 12.5)"], [45.00000000000001, "T8 succeeded on W3 (took 5.8)"], [48.0, "W1 UNAVAILABLE (down until 58.0) - running T9 lost after 9.3"], [48.0, "T9 started on W3"], [58.0, "W1 available again"], [60.5, "T9 succeeded on W3 (took 12.5)"], [60.5, "T11 started on W1"], [64.5, "T11 succeeded on W1 (took 4.0)"]], "reliability": [[0.0, [0.9, 0.9, 0.9, 0.9]], [6.666666666666667, [0.9301, 0.9301, 0.9301, 0.9301]], [8.0, [0.862, 0.7695, 0.862, 0.862]], [14.666666666666668, [0.8893, 0.7869, 0.8893, 0.8893]], [16.666666666666668, [0.8958, 0.7912, 0.8958, 0.8958]], [25.5, [0.9226, 0.826, 0.9226, 0.9226]], [25.833333333333336, [0.9234, 0.8272, 0.9234, 0.9234]], [28.0, [0.8911, 0.7206, 0.8911, 0.8911]], [29.666666666666668, [0.8952, 0.7229, 0.8952, 0.8952]], [38.66666666666667, [0.9138, 0.7358, 0.9138, 0.9138]], [39.16666666666667, [0.9149, 0.7379, 0.9149, 0.9149]], [42.16666666666667, [0.9212, 0.7498, 0.9212, 0.9212]], [45.00000000000001, [0.9265, 0.7601, 0.9265, 0.9265]], [48.0, [0.9078, 0.6811, 0.9078, 0.9078]], [60.5, [0.9256, 0.6981, 0.9256, 0.9256]], [64.5, [0.9313, 0.7122, 0.9313, 0.9313]]], "metrics": {"scheduler": "eft-retry", "workflow": "demo-12", "n_tasks": 12, "n_workers": 4, "completed": true, "makespan": 64.5, "deadline": 59.3, "deadline_met": false, "n_attempts": 15, "n_failed_attempts": 3, "n_replicas": 0, "n_cancelled": 0, "n_revoked": 0, "n_crashes": 3, "busy_time": 134.66666666666669, "useful_time": 121.50000000000003, "wasted_time": 13.16666666666666, "decision_time_total": 0.0007380000006378395, "n_decisions": 11, "end_time": 64.5, "tasks_succeeded": 12, "n_retries": 3, "replicas_started": 0, "recovery_time_mean": 13.555555555555557, "resource_overhead": 0.10836762688614533, "mean_decision_ms": 0.0670909091488945, "task_success_rate": 1.0, "utilization": 0.5219638242894058, "fail_worker_unavailable": 3, "fail_injected": 0, "fail_timeout": 0, "fail_dispatch_error": 0, "fail_task_error": 0, "n_task_retries": 3, "ft_execute": 12, "ft_retry": 3, "ft_replicate": 0, "replicas_requested": 0, "replica_shortfall": 0, "n_reassign_decisions": 0}}, {"format": "rdas-run/1", "label": "adaptive (with history)", "scheduler": "adaptive", "scenario": "W1 (fast, flaky) crashes every 20 time units from t=8, down 10 units each time", "end_time": 60.833333333333336, "workflow": {"name": "demo-12", "deadline": 59.3, "tasks": [{"id": 0, "label": "T0", "work": 10.0, "type": "sleep", "preds": []}, {"id": 1, "label": "T1", "work": 14.0, "type": "sleep", "preds": [0]}, {"id": 2, "label": "T2", "work": 8.0, "type": "sleep", "preds": [0]}, {"id": 3, "label": "T3", "work": 12.0, "type": "sleep", "preds": [0]}, {"id": 4, "label": "T4", "work": 16.0, "type": "sleep", "preds": [1]}, {"id": 5, "label": "T5", "work": 9.0, "type": "sleep", "preds": [1, 2]}, {"id": 6, "label": "T6", "work": 11.0, "type": "sleep", "preds": [2, 3]}, {"id": 7, "label": "T7", "work": 13.0, "type": "sleep", "preds": [3]}, {"id": 8, "label": "T8", "work": 7.0, "type": "sleep", "preds": [4, 5]}, {"id": 9, "label": "T9", "work": 15.0, "type": "sleep", "preds": [5, 6]}, {"id": 10, "label": "T10", "work": 10.0, "type": "sleep", "preds": [7]}, {"id": 11, "label": "T11", "work": 6.0, "type": "sleep", "preds": [8, 9, 10]}]}, "workers": [{"id": 0, "label": "steady", "speed": 1.0}, {"id": 1, "label": "fast-flaky", "speed": 1.5}, {"id": 2, "label": "slow-reliable", "speed": 0.8}, {"id": 3, "label": "fast", "speed": 1.2}], "attempts": [{"attempt": 0, "task": "T0", "task_id": 0, "worker": 3, "kind": "primary", "queued_at": 0.0, "start": 0.0, "end": 8.333333333333334, "outcome": "success", "category": null, "expected_duration": 8.333333333333334, "actual_duration": 8.333333333333334, "est_p_success": 0.9583091002170674, "reason": "single copy (p_success=0.96; replica not worth it)"}, {"attempt": 1, "task": "T1", "task_id": 1, "worker": 3, "kind": "primary", "queued_at": 8.333333333333334, "start": 8.333333333333334, "end": 20.0, "outcome": "success", "category": null, "expected_duration": 11.666666666666668, "actual_duration": 11.666666666666666, "est_p_success": 0.9404185959267969, "reason": "single copy (p_success=0.94; replica not worth it)"}, {"attempt": 2, "task": "T3", "task_id": 3, "worker": 0, "kind": "primary", "queued_at": 8.333333333333334, "start": 8.333333333333334, "end": 20.333333333333336, "outcome": "success", "category": null, "expected_duration": 12.0, "actual_duration": 12.000000000000002, "est_p_success": 0.9387694695473265, "reason": "p_success=0.94 on best worker; replica saves expected time (gain 0.01, load pressure 0.8)"}, {"attempt": 3, "task": "T3", "task_id": 3, "worker": 2, "kind": "replica", "queued_at": 8.333333333333334, "start": 8.333333333333334, "end": 20.333333333333336, "outcome": "cancelled", "category": null, "expected_duration": 15.0, "actual_duration": 12.000000000000002, "est_p_success": 0.9240568619577502, "reason": "p_success=0.94 on best worker; replica saves expected time (gain 0.01, load pressure 0.8)"}, {"attempt": 4, "task": "T2", "task_id": 2, "worker": 3, "kind": "primary", "queued_at": 8.333333333333334, "start": 20.0, "end": 26.666666666666668, "outcome": "success", "category": null, "expected_duration": 6.666666666666667, "actual_duration": 6.666666666666668, "est_p_success": 0.9655059982139644, "reason": "single copy (p_success=0.95; replica not worth it)"}, {"attempt": 5, "task": "T4", "task_id": 4, "worker": 0, "kind": "primary", "queued_at": 20.0, "start": 20.333333333333336, "end": 36.333333333333336, "outcome": "success", "category": null, "expected_duration": 16.0, "actual_duration": 16.0, "est_p_success": 0.9239022894714181, "reason": "single copy (p_success=0.92; replica not worth it)"}, {"attempt": 6, "task": "T7", "task_id": 7, "worker": 1, "kind": "primary", "queued_at": 20.333333333333336, "start": 20.333333333333336, "end": 28.0, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 8.666666666666666, "actual_duration": 7.666666666666664, "est_p_success": 0.5883982264768367, "reason": "p_success=0.59 on best worker; replica saves expected time (gain 0.50, load pressure 1.0)"}, {"attempt": 7, "task": "T7", "task_id": 7, "worker": 2, "kind": "replica", "queued_at": 20.333333333333336, "start": 20.333333333333336, "end": 36.583333333333336, "outcome": "success", "category": null, "expected_duration": 16.25, "actual_duration": 16.25, "est_p_success": 0.9229646617192747, "reason": "p_success=0.59 on best worker; replica saves expected time (gain 0.50, load pressure 1.0)"}, {"attempt": 8, "task": "T6", "task_id": 6, "worker": 3, "kind": "primary", "queued_at": 26.666666666666668, "start": 26.666666666666668, "end": 35.833333333333336, "outcome": "success", "category": null, "expected_duration": 9.166666666666668, "actual_duration": 9.166666666666668, "est_p_success": 0.9579662299827922, "reason": "single copy (p_success=0.96; replica not worth it)"}, {"attempt": 9, "task": "T5", "task_id": 5, "worker": 1, "kind": "primary", "queued_at": 26.666666666666668, "start": null, "end": null, "outcome": "revoked", "category": null, "expected_duration": 6.0, "actual_duration": null, "est_p_success": 0.7042535587193188, "reason": "single copy (p_success=0.70; replica not worth it)"}, {"attempt": 10, "task": "T5", "task_id": 5, "worker": 3, "kind": "primary", "queued_at": 28.0, "start": 35.833333333333336, "end": 43.333333333333336, "outcome": "success", "category": null, "expected_duration": 7.5, "actual_duration": 7.5, "est_p_success": 0.9625154183411845, "reason": "reassigned: W1 is down"}, {"attempt": 11, "task": "T10", "task_id": 10, "worker": 0, "kind": "primary", "queued_at": 36.583333333333336, "start": 36.583333333333336, "end": 46.583333333333336, "outcome": "success", "category": null, "expected_duration": 10.0, "actual_duration": 10.0, "est_p_success": 0.9520803500757604, "reason": "single copy (p_success=0.95; replica not worth it)"}, {"attempt": 12, "task": "T9", "task_id": 9, "worker": 3, "kind": "primary", "queued_at": 43.333333333333336, "start": 43.333333333333336, "end": 55.833333333333336, "outcome": "success", "category": null, "expected_duration": 12.5, "actual_duration": 12.5, "est_p_success": 0.9431241254930585, "reason": "single copy (p_success=0.94; replica not worth it)"}, {"attempt": 13, "task": "T8", "task_id": 8, "worker": 1, "kind": "primary", "queued_at": 43.333333333333336, "start": 43.333333333333336, "end": 48.0, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 4.666666666666667, "actual_duration": 4.666666666666664, "est_p_success": 0.7502586323325244, "reason": "single copy (p_success=0.75; replica not worth it)"}, {"attempt": 14, "task": "T8", "task_id": 8, "worker": 0, "kind": "primary", "queued_at": 48.0, "start": 48.0, "end": 55.0, "outcome": "success", "category": null, "expected_duration": 7.0, "actual_duration": 7.0, "est_p_success": 0.9660094549448163, "reason": "retry on a different worker (p_success=0.97; replica not worth it)"}, {"attempt": 15, "task": "T11", "task_id": 11, "worker": 3, "kind": "primary", "queued_at": 55.833333333333336, "start": 55.833333333333336, "end": 60.833333333333336, "outcome": "success", "category": null, "expected_duration": 5.0, "actual_duration": 5.0, "est_p_success": 0.9763197839561522, "reason": "single copy (p_success=0.98; replica not worth it)"}], "down": [[1, 8.0, 18.0], [1, 28.0, 38.0], [1, 48.0, 58.0]], "log": [[0.0, "T0 -> W3 (p_success=0.96); avoided earliest-finish W1 (p_success=0.67)"], [0.0, "T0 started on W3"], [8.0, "W1 UNAVAILABLE while idle (down until 18.0)"], [8.333333333333334, "T0 succeeded on W3 (took 8.3)"], [8.333333333333334, "T1 -> W3 (p_success=0.94)"], [8.333333333333334, "T3 -> W0 (p_success=0.94); avoided earliest-finish W3 (p_success=0.95); REPLICA on W2 [p_success=0.94 on best worker; replica saves expected time (gain 0.01, load pressure 0.8)]"], [8.333333333333334, "T2 -> W3 (p_success=0.97)"], [8.333333333333334, "T3 started on W0"], [8.333333333333334, "T3 started on W2 (replica)"], [8.333333333333334, "T1 started on W3"], [18.0, "W1 available again"], [20.0, "T1 succeeded on W3 (took 11.7)"], [20.0, "T4 -> W0 (p_success=0.92); avoided earliest-finish W1 (p_success=0.52)"], [20.0, "T2 started on W3"], [20.333333333333336, "T3 succeeded on W0 (took 12.0)"], [20.333333333333336, "  cancelled redundant copy of T3 on W2"], [20.333333333333336, "T7 -> W1 (p_success=0.59); REPLICA on W2 [p_success=0.59 on best worker; replica saves expected time (gain 0.50, load pressure 1.0)]"], [20.333333333333336, "T4 started on W0"], [20.333333333333336, "T7 started on W1"], [20.333333333333336, "T7 started on W2 (replica)"], [26.666666666666668, "T2 succeeded on W3 (took 6.7)"], [26.666666666666668, "T6 -> W3 (p_success=0.96)"], [26.666666666666668, "T5 -> W1 (p_success=0.70); avoided earliest-finish W3 (p_success=0.97)"], [26.666666666666668, "T6 started on W3"], [28.0, "W1 UNAVAILABLE (down until 38.0) - running T7 lost after 7.7"], [28.0, "reassign T5: W1 is down -> W3"], [28.0, "  reassign: T5 withdrawn from W1's queue"], [35.833333333333336, "T6 succeeded on W3 (took 9.2)"], [35.833333333333336, "T5 started on W3"], [36.333333333333336, "T4 succeeded on W0 (took 16.0)"], [36.583333333333336, "T7 succeeded on W2 (took 16.2)"], [36.583333333333336, "T10 -> W0 (p_success=0.95)"], [36.583333333333336, "T10 started on W0"], [38.0, "W1 available again"], [43.333333333333336, "T5 succeeded on W3 (took 7.5)"], [43.333333333333336, "T9 -> W3 (p_success=0.94); avoided earliest-finish W1 (p_success=0.54)"], [43.333333333333336, "T8 -> W1 (p_success=0.75)"], [43.333333333333336, "T8 started on W1"], [43.333333333333336, "T9 started on W3"], [46.583333333333336, "T10 succeeded on W0 (took 10.0)"], [48.0, "W1 UNAVAILABLE (down until 58.0) - running T8 lost after 4.7"], [48.0, "T8 -> W0 (p_success=0.97) [retry]"], [48.0, "T8 started on W0"], [55.0, "T8 succeeded on W0 (took 7.0)"], [55.833333333333336, "T9 succeeded on W3 (took 12.5)"], [55.833333333333336, "T11 -> W3 (p_success=0.98)"], [55.833333333333336, "T11 started on W3"], [58.0, "W1 available again"], [60.833333333333336, "T11 succeeded on W3 (took 5.0)"]], "reliability": [[0.0, [0.9516, 0.5616, 0.9516, 0.9516]], [8.0, [0.9501, 0.5456, 0.9501, 0.9501]], [8.333333333333334, [0.9502, 0.5456, 0.9502, 0.9502]], [20.0, [0.9531, 0.5514, 0.9531, 0.9531]], [20.333333333333336, [0.9533, 0.5522, 0.9533, 0.9533]], [26.666666666666668, [0.9556, 0.5672, 0.9556, 0.9556]], [28.0, [0.9518, 0.537, 0.9518, 0.9518]], [35.833333333333336, [0.9533, 0.5376, 0.9533, 0.9533]], [36.333333333333336, [0.9534, 0.5376, 0.9534, 0.9534]], [36.583333333333336, [0.9535, 0.5376, 0.9535, 0.9535]], [43.333333333333336, [0.9556, 0.5502, 0.9556, 0.9556]], [46.583333333333336, [0.9566, 0.5576, 0.9566, 0.9566]], [48.0, [0.9532, 0.5293, 0.9532, 0.9532]], [55.0, [0.9544, 0.5298, 0.9544, 0.9544]], [55.833333333333336, [0.9546, 0.5299, 0.9546, 0.9546]], [60.833333333333336, [0.9558, 0.5365, 0.9558, 0.9558]]], "metrics": {"scheduler": "adaptive", "workflow": "demo-12", "n_tasks": 12, "n_workers": 4, "completed": true, "makespan": 60.833333333333336, "deadline": 59.3, "deadline_met": false, "n_attempts": 16, "n_failed_attempts": 2, "n_replicas": 2, "n_cancelled": 1, "n_revoked": 1, "n_crashes": 3, "busy_time": 146.41666666666666, "useful_time": 122.08333333333334, "wasted_time": 24.33333333333333, "decision_time_total": 0.001968599995961995, "n_decisions": 10, "end_time": 60.833333333333336, "tasks_succeeded": 12, "n_retries": 1, "replicas_started": 2, "recovery_time_mean": 7.0, "resource_overhead": 0.19931740614334464, "mean_decision_ms": 0.1968599995961995, "task_success_rate": 1.0, "utilization": 0.6017123287671232, "fail_worker_unavailable": 2, "fail_injected": 0, "fail_timeout": 0, "fail_dispatch_error": 0, "fail_task_error": 0, "n_task_retries": 2, "ft_execute": 10, "ft_retry": 1, "ft_replicate": 2, "replicas_requested": 2, "replica_shortfall": 0, "n_reassign_decisions": 1, "n_solver_calls": 0, "solver_time": 0.0, "solver_build_time": 0.0, "solver_anneal_time": 0.0, "solver_vars": 0, "qubo_infeasible": 0, "qubo_infeasible_tasks": 0, "greedy_gap_sum": 0.0, "mean_solver_ms": 0.0, "mean_solver_build_ms": 0.0, "mean_solver_anneal_ms": 0.0, "mean_solver_vars": 0.0, "qubo_feasibility_rate": 1.0}}, {"format": "rdas-run/1", "label": "replicate-2 (every task twice)", "scheduler": "replicate-2", "scenario": "W1 (fast, flaky) crashes every 20 time units from t=8, down 10 units each time", "end_time": 61.16666666666667, "workflow": {"name": "demo-12", "deadline": 59.3, "tasks": [{"id": 0, "label": "T0", "work": 10.0, "type": "sleep", "preds": []}, {"id": 1, "label": "T1", "work": 14.0, "type": "sleep", "preds": [0]}, {"id": 2, "label": "T2", "work": 8.0, "type": "sleep", "preds": [0]}, {"id": 3, "label": "T3", "work": 12.0, "type": "sleep", "preds": [0]}, {"id": 4, "label": "T4", "work": 16.0, "type": "sleep", "preds": [1]}, {"id": 5, "label": "T5", "work": 9.0, "type": "sleep", "preds": [1, 2]}, {"id": 6, "label": "T6", "work": 11.0, "type": "sleep", "preds": [2, 3]}, {"id": 7, "label": "T7", "work": 13.0, "type": "sleep", "preds": [3]}, {"id": 8, "label": "T8", "work": 7.0, "type": "sleep", "preds": [4, 5]}, {"id": 9, "label": "T9", "work": 15.0, "type": "sleep", "preds": [5, 6]}, {"id": 10, "label": "T10", "work": 10.0, "type": "sleep", "preds": [7]}, {"id": 11, "label": "T11", "work": 6.0, "type": "sleep", "preds": [8, 9, 10]}]}, "workers": [{"id": 0, "label": "steady", "speed": 1.0}, {"id": 1, "label": "fast-flaky", "speed": 1.5}, {"id": 2, "label": "slow-reliable", "speed": 0.8}, {"id": 3, "label": "fast", "speed": 1.2}], "attempts": [{"attempt": 0, "task": "T0", "task_id": 0, "worker": 1, "kind": "primary", "queued_at": 0.0, "start": 0.0, "end": 6.666666666666667, "outcome": "success", "category": null, "expected_duration": 6.666666666666667, "actual_duration": 6.666666666666667, "est_p_success": 0.9301726293597599, "reason": "static policy: always 2 copies"}, {"attempt": 1, "task": "T0", "task_id": 0, "worker": 3, "kind": "replica", "queued_at": 0.0, "start": 0.0, "end": 6.666666666666667, "outcome": "cancelled", "category": null, "expected_duration": 8.333333333333334, "actual_duration": 6.666666666666667, "est_p_success": 0.9134913622567155, "reason": "static policy: always 2 copies"}, {"attempt": 2, "task": "T1", "task_id": 1, "worker": 1, "kind": "primary", "queued_at": 6.666666666666667, "start": 6.666666666666667, "end": 8.0, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 9.333333333333334, "actual_duration": 1.333333333333333, "est_p_success": 0.9326886442660838, "reason": "static policy: always 2 copies"}, {"attempt": 3, "task": "T1", "task_id": 1, "worker": 3, "kind": "replica", "queued_at": 6.666666666666667, "start": 6.666666666666667, "end": 18.333333333333336, "outcome": "success", "category": null, "expected_duration": 11.666666666666668, "actual_duration": 11.666666666666668, "est_p_success": 0.9165810232340612, "reason": "static policy: always 2 copies"}, {"attempt": 4, "task": "T3", "task_id": 3, "worker": 0, "kind": "primary", "queued_at": 6.666666666666667, "start": 6.666666666666667, "end": 18.666666666666668, "outcome": "success", "category": null, "expected_duration": 12.0, "actual_duration": 12.0, "est_p_success": 0.9143027560565244, "reason": "static policy: always 2 copies"}, {"attempt": 5, "task": "T3", "task_id": 3, "worker": 2, "kind": "replica", "queued_at": 6.666666666666667, "start": 6.666666666666667, "end": 18.666666666666668, "outcome": "cancelled", "category": null, "expected_duration": 15.0, "actual_duration": 12.0, "est_p_success": 0.8940514999290108, "reason": "static policy: always 2 copies"}, {"attempt": 6, "task": "T2", "task_id": 2, "worker": 1, "kind": "primary", "queued_at": 6.666666666666667, "start": 18.0, "end": 23.333333333333332, "outcome": "success", "category": null, "expected_duration": 5.333333333333333, "actual_duration": 5.333333333333332, "est_p_success": 0.9609630291619178, "reason": "static policy: always 2 copies"}, {"attempt": 7, "task": "T2", "task_id": 2, "worker": 3, "kind": "replica", "queued_at": 6.666666666666667, "start": 18.333333333333336, "end": 23.333333333333332, "outcome": "cancelled", "category": null, "expected_duration": 6.666666666666667, "actual_duration": 4.9999999999999964, "est_p_success": 0.9514442578024183, "reason": "static policy: always 2 copies"}, {"attempt": 8, "task": "T4", "task_id": 4, "worker": 1, "kind": "primary", "queued_at": 18.333333333333336, "start": null, "end": null, "outcome": "cancelled", "category": null, "expected_duration": 10.666666666666666, "actual_duration": null, "est_p_success": 0.7776424777188938, "reason": "static policy: always 2 copies"}, {"attempt": 9, "task": "T4", "task_id": 4, "worker": 0, "kind": "replica", "queued_at": 18.333333333333336, "start": 18.666666666666668, "end": 34.66666666666667, "outcome": "success", "category": null, "expected_duration": 16.0, "actual_duration": 16.000000000000004, "est_p_success": 0.8421408036074296, "reason": "static policy: always 2 copies"}, {"attempt": 10, "task": "T7", "task_id": 7, "worker": 2, "kind": "primary", "queued_at": 18.666666666666668, "start": 18.666666666666668, "end": 34.91666666666667, "outcome": "success", "category": null, "expected_duration": 16.25, "actual_duration": 16.250000000000004, "est_p_success": 0.8417658417814079, "reason": "static policy: always 2 copies"}, {"attempt": 11, "task": "T7", "task_id": 7, "worker": 3, "kind": "replica", "queued_at": 18.666666666666668, "start": 32.5, "end": 34.91666666666667, "outcome": "cancelled", "category": null, "expected_duration": 10.833333333333334, "actual_duration": 2.4166666666666714, "est_p_success": 0.8915126959154515, "reason": "static policy: always 2 copies"}, {"attempt": 12, "task": "T6", "task_id": 6, "worker": 1, "kind": "primary", "queued_at": 23.333333333333332, "start": 23.333333333333332, "end": 28.0, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 7.333333333333333, "actual_duration": 4.666666666666668, "est_p_success": 0.8589707370232337, "reason": "static policy: always 2 copies"}, {"attempt": 13, "task": "T6", "task_id": 6, "worker": 3, "kind": "replica", "queued_at": 23.333333333333332, "start": 23.333333333333332, "end": 32.5, "outcome": "success", "category": null, "expected_duration": 9.166666666666668, "actual_duration": 9.166666666666668, "est_p_success": 0.9213361796841913, "reason": "static policy: always 2 copies"}, {"attempt": 14, "task": "T5", "task_id": 5, "worker": 0, "kind": "primary", "queued_at": 23.333333333333332, "start": 34.66666666666667, "end": 43.66666666666667, "outcome": "success", "category": null, "expected_duration": 9.0, "actual_duration": 9.0, "est_p_success": 0.9227096632204342, "reason": "static policy: always 2 copies"}, {"attempt": 15, "task": "T5", "task_id": 5, "worker": 2, "kind": "replica", "queued_at": 23.333333333333332, "start": 34.91666666666667, "end": 43.66666666666667, "outcome": "cancelled", "category": null, "expected_duration": 11.25, "actual_duration": 8.75, "est_p_success": 0.9043391576044015, "reason": "static policy: always 2 copies"}, {"attempt": 16, "task": "T10", "task_id": 10, "worker": 3, "kind": "primary", "queued_at": 34.91666666666667, "start": 34.91666666666667, "end": 43.25000000000001, "outcome": "success", "category": null, "expected_duration": 8.333333333333334, "actual_duration": 8.333333333333336, "est_p_success": 0.9191676457142003, "reason": "static policy: always 2 copies"}, {"attempt": 17, "task": "T10", "task_id": 10, "worker": 0, "kind": "replica", "queued_at": 34.91666666666667, "start": null, "end": null, "outcome": "cancelled", "category": null, "expected_duration": 10.0, "actual_duration": null, "est_p_success": 0.9038027840277455, "reason": "static policy: always 2 copies"}, {"attempt": 18, "task": "T9", "task_id": 9, "worker": 1, "kind": "primary", "queued_at": 43.66666666666667, "start": 43.66666666666667, "end": 48.0, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 10.0, "actual_duration": 4.333333333333329, "est_p_success": 0.7489208638338977, "reason": "static policy: always 2 copies"}, {"attempt": 19, "task": "T9", "task_id": 9, "worker": 3, "kind": "replica", "queued_at": 43.66666666666667, "start": 43.66666666666667, "end": 56.16666666666667, "outcome": "success", "category": null, "expected_duration": 12.5, "actual_duration": 12.5, "est_p_success": 0.9032704626042267, "reason": "static policy: always 2 copies"}, {"attempt": 20, "task": "T8", "task_id": 8, "worker": 0, "kind": "primary", "queued_at": 43.66666666666667, "start": 43.66666666666667, "end": 50.66666666666667, "outcome": "success", "category": null, "expected_duration": 7.0, "actual_duration": 7.0, "est_p_success": 0.9446218194132111, "reason": "static policy: always 2 copies"}, {"attempt": 21, "task": "T8", "task_id": 8, "worker": 2, "kind": "replica", "queued_at": 43.66666666666667, "start": 43.66666666666667, "end": 50.66666666666667, "outcome": "cancelled", "category": null, "expected_duration": 8.75, "actual_duration": 7.0, "est_p_success": 0.9312632526517506, "reason": "static policy: always 2 copies"}, {"attempt": 22, "task": "T11", "task_id": 11, "worker": 3, "kind": "primary", "queued_at": 56.16666666666667, "start": 56.16666666666667, "end": 61.16666666666667, "outcome": "success", "category": null, "expected_duration": 5.0, "actual_duration": 5.0, "est_p_success": 0.9576305903605523, "reason": "static policy: always 2 copies"}, {"attempt": 23, "task": "T11", "task_id": 11, "worker": 0, "kind": "replica", "queued_at": 56.16666666666667, "start": 56.16666666666667, "end": 61.16666666666667, "outcome": "cancelled", "category": null, "expected_duration": 6.0, "actual_duration": 5.0, "est_p_success": 0.9493746099198688, "reason": "static policy: always 2 copies"}], "down": [[1, 8.0, 18.0], [1, 28.0, 38.0], [1, 48.0, 58.0]], "log": [[0.0, "T0 started on W1"], [0.0, "T0 started on W3 (replica)"], [6.666666666666667, "T0 succeeded on W1 (took 6.7)"], [6.666666666666667, "  cancelled redundant copy of T0 on W3"], [6.666666666666667, "T3 started on W0"], [6.666666666666667, "T1 started on W1"], [6.666666666666667, "T3 started on W2 (replica)"], [6.666666666666667, "T1 started on W3 (replica)"], [8.0, "W1 UNAVAILABLE (down until 18.0) - running T1 lost after 1.3"], [18.0, "W1 available again"], [18.0, "T2 started on W1"], [18.333333333333336, "T1 succeeded on W3 (took 11.7)"], [18.333333333333336, "T2 started on W3 (replica)"], [18.666666666666668, "T3 succeeded on W0 (took 12.0)"], [18.666666666666668, "  cancelled redundant copy of T3 on W2"], [18.666666666666668, "T4 started on W0 (replica)"], [18.666666666666668, "T7 started on W2"], [23.333333333333332, "T2 succeeded on W1 (took 5.3)"], [23.333333333333332, "  cancelled redundant copy of T2 on W3"], [23.333333333333332, "T6 started on W1"], [23.333333333333332, "T6 started on W3 (replica)"], [28.0, "W1 UNAVAILABLE (down until 38.0) - running T6 lost after 4.7"], [32.5, "T6 succeeded on W3 (took 9.2)"], [32.5, "T7 started on W3 (replica)"], [34.66666666666667, "T4 succeeded on W0 (took 16.0)"], [34.66666666666667, "  cancelled redundant copy of T4 on W1"], [34.66666666666667, "T5 started on W0"], [34.91666666666667, "T7 succeeded on W2 (took 16.3)"], [34.91666666666667, "  cancelled redundant copy of T7 on W3"], [34.91666666666667, "T5 started on W2 (replica)"], [34.91666666666667, "T10 started on W3"], [38.0, "W1 available again"], [43.25000000000001, "T10 succeeded on W3 (took 8.3)"], [43.25000000000001, "  cancelled redundant copy of T10 on W0"], [43.66666666666667, "T5 succeeded on W0 (took 9.0)"], [43.66666666666667, "  cancelled redundant copy of T5 on W2"], [43.66666666666667, "T8 started on W0"], [43.66666666666667, "T9 started on W1"], [43.66666666666667, "T8 started on W2 (replica)"], [43.66666666666667, "T9 started on W3 (replica)"], [48.0, "W1 UNAVAILABLE (down until 58.0) - running T9 lost after 4.3"], [50.66666666666667, "T8 succeeded on W0 (took 7.0)"], [50.66666666666667, "  cancelled redundant copy of T8 on W2"], [56.16666666666667, "T9 succeeded on W3 (took 12.5)"], [56.16666666666667, "T11 started on W0 (replica)"], [56.16666666666667, "T11 started on W3"], [58.0, "W1 available again"], [61.16666666666667, "T11 succeeded on W3 (took 5.0)"], [61.16666666666667, "  cancelled redundant copy of T11 on W0"]], "reliability": [[0.0, [0.9, 0.9, 0.9, 0.9]], [6.666666666666667, [0.9301, 0.9301, 0.9301, 0.9301]], [8.0, [0.862, 0.7695, 0.862, 0.862]], [18.333333333333336, [0.901, 0.7955, 0.901, 0.901]], [18.666666666666668, [0.9023, 0.7972, 0.9023, 0.9023]], [23.333333333333332, [0.9169, 0.8178, 0.9169, 0.9169]], [28.0, [0.8911, 0.7206, 0.8911, 0.8911]], [32.5, [0.9016, 0.7266, 0.9016, 0.9016]], [34.66666666666667, [0.906, 0.7292, 0.906, 0.906]], [34.91666666666667, [0.9065, 0.7295, 0.9065, 0.9065]], [43.25000000000001, [0.9233, 0.7538, 0.9233, 0.9233]], [43.66666666666667, [0.9241, 0.7554, 0.9241, 0.9241]], [48.0, [0.9078, 0.6811, 0.9078, 0.9078]], [50.66666666666667, [0.9119, 0.6833, 0.9119, 0.9119]], [56.16666666666667, [0.9194, 0.6874, 0.9194, 0.9194]], [61.16666666666667, [0.9266, 0.7006, 0.9266, 0.9266]]], "metrics": {"scheduler": "replicate-2", "workflow": "demo-12", "n_tasks": 12, "n_workers": 4, "completed": true, "makespan": 61.16666666666667, "deadline": 59.3, "deadline_met": false, "n_attempts": 24, "n_failed_attempts": 3, "n_replicas": 12, "n_cancelled": 9, "n_revoked": 0, "n_crashes": 3, "busy_time": 176.08333333333337, "useful_time": 118.91666666666669, "wasted_time": 57.166666666666664, "decision_time_total": 0.00048040000183391385, "n_decisions": 8, "end_time": 61.16666666666667, "tasks_succeeded": 12, "n_retries": 0, "replicas_started": 11, "recovery_time_mean": 0.0, "resource_overhead": 0.48072880168184995, "mean_decision_ms": 0.06005000022923923, "task_success_rate": 1.0, "utilization": 0.7196866485013625, "fail_worker_unavailable": 3, "fail_injected": 0, "fail_timeout": 0, "fail_dispatch_error": 0, "fail_task_error": 0, "n_task_retries": 3, "ft_execute": 0, "ft_retry": 0, "ft_replicate": 12, "replicas_requested": 12, "replica_shortfall": 0, "n_reassign_decisions": 0}}, {"format": "rdas-run/1", "label": "static HEFT", "scheduler": "heft", "scenario": "W1 (fast, flaky) crashes every 20 time units from t=8, down 10 units each time", "end_time": 148.0, "workflow": {"name": "demo-12", "deadline": 59.3, "tasks": [{"id": 0, "label": "T0", "work": 10.0, "type": "sleep", "preds": []}, {"id": 1, "label": "T1", "work": 14.0, "type": "sleep", "preds": [0]}, {"id": 2, "label": "T2", "work": 8.0, "type": "sleep", "preds": [0]}, {"id": 3, "label": "T3", "work": 12.0, "type": "sleep", "preds": [0]}, {"id": 4, "label": "T4", "work": 16.0, "type": "sleep", "preds": [1]}, {"id": 5, "label": "T5", "work": 9.0, "type": "sleep", "preds": [1, 2]}, {"id": 6, "label": "T6", "work": 11.0, "type": "sleep", "preds": [2, 3]}, {"id": 7, "label": "T7", "work": 13.0, "type": "sleep", "preds": [3]}, {"id": 8, "label": "T8", "work": 7.0, "type": "sleep", "preds": [4, 5]}, {"id": 9, "label": "T9", "work": 15.0, "type": "sleep", "preds": [5, 6]}, {"id": 10, "label": "T10", "work": 10.0, "type": "sleep", "preds": [7]}, {"id": 11, "label": "T11", "work": 6.0, "type": "sleep", "preds": [8, 9, 10]}]}, "workers": [{"id": 0, "label": "steady", "speed": 1.0}, {"id": 1, "label": "fast-flaky", "speed": 1.5}, {"id": 2, "label": "slow-reliable", "speed": 0.8}, {"id": 3, "label": "fast", "speed": 1.2}], "attempts": [{"attempt": 0, "task": "T0", "task_id": 0, "worker": 1, "kind": "primary", "queued_at": 0.0, "start": 0.0, "end": 6.666666666666667, "outcome": "success", "category": null, "expected_duration": 6.666666666666667, "actual_duration": 6.666666666666667, "est_p_success": 0.9301726293597599, "reason": ""}, {"attempt": 1, "task": "T1", "task_id": 1, "worker": 3, "kind": "primary", "queued_at": 6.666666666666667, "start": 6.666666666666667, "end": 18.333333333333336, "outcome": "success", "category": null, "expected_duration": 11.666666666666668, "actual_duration": 11.666666666666668, "est_p_success": 0.9165810232340612, "reason": ""}, {"attempt": 2, "task": "T2", "task_id": 2, "worker": 0, "kind": "primary", "queued_at": 6.666666666666667, "start": 6.666666666666667, "end": 14.666666666666668, "outcome": "success", "category": null, "expected_duration": 8.0, "actual_duration": 8.0, "est_p_success": 0.9420197741578931, "reason": ""}, {"attempt": 3, "task": "T3", "task_id": 3, "worker": 1, "kind": "primary", "queued_at": 6.666666666666667, "start": 6.666666666666667, "end": 8.0, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 8.0, "actual_duration": 1.333333333333333, "est_p_success": 0.9420197741578931, "reason": ""}, {"attempt": 4, "task": "T3", "task_id": 3, "worker": 1, "kind": "primary", "queued_at": 8.0, "start": 18.0, "end": 26.0, "outcome": "success", "category": null, "expected_duration": 8.0, "actual_duration": 8.0, "est_p_success": 0.805754449283148, "reason": ""}, {"attempt": 5, "task": "T4", "task_id": 4, "worker": 1, "kind": "primary", "queued_at": 18.333333333333336, "start": 45.333333333333336, "end": 48.0, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 10.666666666666666, "actual_duration": 2.6666666666666643, "est_p_success": 0.7776424777188938, "reason": ""}, {"attempt": 6, "task": "T5", "task_id": 5, "worker": 3, "kind": "primary", "queued_at": 18.333333333333336, "start": 18.333333333333336, "end": 25.833333333333336, "outcome": "success", "category": null, "expected_duration": 7.5, "actual_duration": 7.5, "est_p_success": 0.9226225880751557, "reason": ""}, {"attempt": 7, "task": "T6", "task_id": 6, "worker": 1, "kind": "primary", "queued_at": 26.0, "start": 26.0, "end": 28.0, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 7.333333333333333, "actual_duration": 2.0, "est_p_success": 0.8669205595949182, "reason": ""}, {"attempt": 8, "task": "T7", "task_id": 7, "worker": 0, "kind": "primary", "queued_at": 26.0, "start": 26.0, "end": 39.0, "outcome": "success", "category": null, "expected_duration": 13.0, "actual_duration": 13.0, "est_p_success": 0.8992410557558944, "reason": ""}, {"attempt": 9, "task": "T6", "task_id": 6, "worker": 1, "kind": "primary", "queued_at": 28.0, "start": 38.0, "end": 45.333333333333336, "outcome": "success", "category": null, "expected_duration": 7.333333333333333, "actual_duration": 7.333333333333336, "est_p_success": 0.7806367310462394, "reason": ""}, {"attempt": 10, "task": "T10", "task_id": 10, "worker": 0, "kind": "primary", "queued_at": 39.0, "start": 39.0, "end": 49.0, "outcome": "success", "category": null, "expected_duration": 10.0, "actual_duration": 10.0, "est_p_success": 0.9120602793561223, "reason": ""}, {"attempt": 11, "task": "T9", "task_id": 9, "worker": 3, "kind": "primary", "queued_at": 45.333333333333336, "start": 45.333333333333336, "end": 57.833333333333336, "outcome": "success", "category": null, "expected_duration": 12.5, "actual_duration": 12.5, "est_p_success": 0.9070484271481342, "reason": ""}, {"attempt": 12, "task": "T4", "task_id": 4, "worker": 1, "kind": "primary", "queued_at": 48.0, "start": 58.0, "end": 68.0, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 10.666666666666666, "actual_duration": 10.0, "est_p_success": 0.6556688761632667, "reason": ""}, {"attempt": 13, "task": "T4", "task_id": 4, "worker": 1, "kind": "primary", "queued_at": 68.0, "start": 78.0, "end": 88.0, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 10.666666666666666, "actual_duration": 10.0, "est_p_success": 0.6226001280723954, "reason": ""}, {"attempt": 14, "task": "T4", "task_id": 4, "worker": 1, "kind": "primary", "queued_at": 88.0, "start": 98.0, "end": 108.0, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 10.666666666666666, "actual_duration": 10.0, "est_p_success": 0.5960879740536691, "reason": ""}, {"attempt": 15, "task": "T4", "task_id": 4, "worker": 1, "kind": "primary", "queued_at": 108.0, "start": 118.0, "end": 128.0, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 10.666666666666666, "actual_duration": 10.0, "est_p_success": 0.5744537876534671, "reason": ""}, {"attempt": 16, "task": "T4", "task_id": 4, "worker": 1, "kind": "primary", "queued_at": 128.0, "start": 138.0, "end": 148.0, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 10.666666666666666, "actual_duration": 10.0, "est_p_success": 0.5565078319661068, "reason": ""}], "down": [[1, 8.0, 18.0], [1, 28.0, 38.0], [1, 48.0, 58.0], [1, 68.0, 78.0], [1, 88.0, 98.0], [1, 108.0, 118.0], [1, 128.0, 138.0], [1, 148.0, 158.0]], "log": [[0.0, "T0 started on W1"], [6.666666666666667, "T0 succeeded on W1 (took 6.7)"], [6.666666666666667, "T2 started on W0"], [6.666666666666667, "T3 started on W1"], [6.666666666666667, "T1 started on W3"], [8.0, "W1 UNAVAILABLE (down until 18.0) - running T3 lost after 1.3"], [14.666666666666668, "T2 succeeded on W0 (took 8.0)"], [18.0, "W1 available again"], [18.0, "T3 started on W1"], [18.333333333333336, "T1 succeeded on W3 (took 11.7)"], [18.333333333333336, "T5 started on W3"], [25.833333333333336, "T5 succeeded on W3 (took 7.5)"], [26.0, "T3 succeeded on W1 (took 8.0)"], [26.0, "T7 started on W0"], [26.0, "T6 started on W1"], [28.0, "W1 UNAVAILABLE (down until 38.0) - running T6 lost after 2.0"], [38.0, "W1 available again"], [38.0, "T6 started on W1"], [39.0, "T7 succeeded on W0 (took 13.0)"], [39.0, "T10 started on W0"], [45.333333333333336, "T6 succeeded on W1 (took 7.3)"], [45.333333333333336, "T4 started on W1"], [45.333333333333336, "T9 started on W3"], [48.0, "W1 UNAVAILABLE (down until 58.0) - running T4 lost after 2.7"], [49.0, "T10 succeeded on W0 (took 10.0)"], [57.833333333333336, "T9 succeeded on W3 (took 12.5)"], [58.0, "W1 available again"], [58.0, "T4 started on W1"], [68.0, "W1 UNAVAILABLE (down until 78.0) - running T4 lost after 10.0"], [78.0, "W1 available again"], [78.0, "T4 started on W1"], [88.0, "W1 UNAVAILABLE (down until 98.0) - running T4 lost after 10.0"], [98.0, "W1 available again"], [98.0, "T4 started on W1"], [108.0, "W1 UNAVAILABLE (down until 118.0) - running T4 lost after 10.0"], [118.0, "W1 available again"], [118.0, "T4 started on W1"], [128.0, "W1 UNAVAILABLE (down until 138.0) - running T4 lost after 10.0"], [138.0, "W1 available again"], [138.0, "T4 started on W1"], [148.0, "W1 UNAVAILABLE (down until 158.0) - running T4 lost after 10.0"], [148.0, "T4 FAILED permanently after 5 retries"]], "reliability": [[0.0, [0.9, 0.9, 0.9, 0.9]], [6.666666666666667, [0.9301, 0.9301, 0.9301, 0.9301]], [8.0, [0.862, 0.7695, 0.862, 0.862]], [14.666666666666668, [0.8893, 0.7869, 0.8893, 0.8893]], [18.333333333333336, [0.901, 0.7955, 0.901, 0.901]], [25.833333333333336, [0.9234, 0.8272, 0.9234, 0.9234]], [26.0, [0.9238, 0.8278, 0.9238, 0.9238]], [28.0, [0.8911, 0.7206, 0.8911, 0.8911]], [39.0, [0.9146, 0.7372, 0.9146, 0.9146]], [45.333333333333336, [0.9271, 0.7613, 0.9271, 0.9271]], [48.0, [0.9078, 0.6811, 0.9078, 0.9078]], [49.0, [0.9094, 0.682, 0.9094, 0.9094]], [57.833333333333336, [0.9215, 0.6886, 0.9215, 0.9215]], [68.0, [0.919, 0.6498, 0.919, 0.919]], [88.0, [0.927, 0.6246, 0.927, 0.927]], [108.0, [0.933, 0.6039, 0.933, 0.933]], [128.0, [0.9377, 0.5867, 0.9377, 0.9377]], [148.0, [0.9414, 0.5722, 0.9414, 0.9414]]], "metrics": {"scheduler": "heft", "workflow": "demo-12", "n_tasks": 12, "n_workers": 4, "completed": false, "makespan": null, "deadline": 59.3, "deadline_met": false, "n_attempts": 17, "n_failed_attempts": 8, "n_replicas": 0, "n_cancelled": 0, "n_revoked": 0, "n_crashes": 8, "busy_time": 140.66666666666666, "useful_time": 84.66666666666667, "wasted_time": 56.0, "decision_time_total": 9.050000153365545e-05, "n_decisions": 13, "end_time": 148.0, "tasks_succeeded": 9, "n_retries": 7, "replicas_started": 0, "recovery_time_mean": 17.666666666666668, "resource_overhead": 0.6614173228346456, "mean_decision_ms": 0.006961538579511957, "task_success_rate": 0.75, "utilization": 0.2376126126126126, "fail_worker_unavailable": 8, "fail_injected": 0, "fail_timeout": 0, "fail_dispatch_error": 0, "fail_task_error": 0, "n_task_retries": 8}}], "title": "Schedule replay: simulated crashes", "subtitle": "demo-12 \u00b7 12 tasks \u00b7 4 workers \u00b7 W1 (fast, flaky) crashes every 20 time units from t=8, down 10 units each time", "note": "One illustrative, hand-picked scenario. Statistical results: 30 held-out instances per cell in the experiment results."}</script>
+<div class="page">
+  <header>
+    <h1 id="title">Schedule replay</h1>
+    <div class="sub" id="subtitle"></div>
+  </header>
+
+  <div class="bar" role="toolbar" aria-label="Playback">
+    <button id="restart" title="Back to start (Home)">⏮</button>
+    <button id="prev" title="Previous event (←)">◀ event</button>
+    <button id="play" class="primary" title="Play / pause (Space)">▶ Play</button>
+    <button id="next" title="Next event (→)">event ▶</button>
+    <label class="sub" for="speed">Speed</label>
+    <select id="speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+    <div class="grow"><input id="scrub" type="range" min="0" max="1000" value="0" aria-label="Simulated time"><span class="clock" id="clock">t = 0.0</span></div>
+    <div class="chips" aria-label="Decision feed filter">
+      <button class="chip" id="f-dec" aria-pressed="true">Decisions</button>
+      <button class="chip" id="f-fail" aria-pressed="true">Failures</button>
+      <button class="chip" id="f-life" aria-pressed="false">Starts / finishes</button>
+    </div>
+    <button id="theme" title="Toggle light / dark">◐</button>
+  </div>
+
+  <div class="legend">
+    <span><i style="background:var(--ok)"></i>succeeded</span>
+    <span><i style="background:var(--accent)"></i>running</span>
+    <span><i style="background:var(--bad)"></i>lost / failed</span>
+    <span><i style="background:var(--idle)"></i>cancelled replica</span>
+    <span><i style="background:repeating-linear-gradient(45deg,var(--down) 0 2px,transparent 2px 5px)"></i>worker down</span>
+    <span><i style="border:2px dashed var(--ink);background:transparent"></i>replica copy</span>
+    <span>│ dashed red = deadline</span>
+  </div>
+
+  <div class="runs" id="runs"></div>
+
+  <section class="compare">
+    <h2>Final result</h2>
+    <div class="tablewrap"><table id="cmp"></table></div>
+    <p class="note" id="cmpnote"></p>
+  </section>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const DATA = JSON.parse(document.getElementById("rdas-data").textContent);
+  const RUNS = DATA.runs;
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const fmt = (x, d = 1) => (x === null || x === undefined || Number.isNaN(x) ? "–" : Number(x).toFixed(d));
+
+  // ---------------------------------------------------------------- prepare runs
+  for (const r of RUNS) {
+    r.end = r.end_time || Math.max(0, ...r.attempts.map((a) => a.end || 0));
+    r.att = r.attempts.filter((a) => a.start !== null && a.start !== undefined);
+    for (const a of r.att) a.stop = a.end === null || a.end === undefined ? r.end : a.end;
+    r.downs = r.down.map(([w, s, e]) => ({ w, s, e: e === null ? r.end : e }));
+    r.rel = r.reliability; // [[t, [R...]]] sorted by t
+    r.layers = layout(r.workflow.tasks);
+    r.log = r.log.map(([t, m], i) => ({ t, m, i, k: kind(m) }));
+  }
+  // Time scale and event list cover only the runs on screen, so one long run elsewhere
+  // (e.g. a failed static-HEFT run) does not squash the comparison.
+  let T_MAX = 1, EVENTS = [];
+  function rescale() {
+    const rs = shown.map((i) => RUNS[i]);
+    T_MAX = Math.max(...rs.map((r) => r.end), ...rs.map((r) => r.workflow.deadline || 0)) * 1.02 || 1;
+    EVENTS = [...new Set(rs.flatMap((r) => [
+      ...r.att.flatMap((a) => [a.start, a.stop]), ...r.downs.flatMap((d) => [d.s, d.e]), ...r.log.map((l) => l.t)]))]
+      .filter((t) => t > 0).sort((a, b) => a - b);
+    time = Math.min(time, T_MAX);
+  }
+
+  function kind(m) {
+    if (/UNAVAILABLE|FAILED|CHAOS|lost/.test(m)) return "fail";
+    if (/REPLICA|replica/.test(m) && !/cancelled/.test(m)) return "repl";
+    if (/reassign|withdrawn|available again/.test(m)) return "move";
+    if (/->/.test(m)) return "dec";
+    return "life";
+  }
+
+  function layout(tasks) {
+    const layer = new Map();
+    const byId = new Map(tasks.map((t) => [t.id, t]));
+    const depth = (id) => {
+      if (layer.has(id)) return layer.get(id);
+      const t = byId.get(id);
+      const d = t.preds.length ? 1 + Math.max(...t.preds.map(depth)) : 0;
+      layer.set(id, d);
+      return d;
+    };
+    tasks.forEach((t) => depth(t.id));
+    const cols = [];
+    tasks.forEach((t) => { const d = layer.get(t.id); (cols[d] = cols[d] || []).push(t.id); });
+    return { layer, cols };
+  }
+
+  // ---------------------------------------------------------------- state at time t
+  function taskStates(r, t) {
+    const st = new Map();
+    const done = new Set();
+    for (const a of r.att) if (a.outcome === "success" && a.stop <= t) done.add(a.task_id);
+    for (const task of r.workflow.tasks) {
+      const id = task.id;
+      if (done.has(id)) { st.set(id, "done"); continue; }
+      const mine = r.att.filter((a) => a.task_id === id && a.start <= t);
+      if (mine.some((a) => a.stop > t)) { st.set(id, "running"); continue; }
+      const lastFail = mine.some((a) => a.outcome === "failed");
+      if (lastFail) { st.set(id, t >= r.end && r.metrics.completed === false ? "dead" : "retry"); continue; }
+      st.set(id, task.preds.every((p) => done.has(p)) ? "ready" : "waiting");
+    }
+    return st;
+  }
+  function relAt(r, t) {
+    let cur = r.rel.length ? r.rel[0][1] : null;
+    for (const [tt, vals] of r.rel) { if (tt <= t) cur = vals; else break; }
+    return cur;
+  }
+  function counters(r, t) {
+    let done = 0, failed = 0, repl = 0, wasted = 0;
+    const seen = new Set();
+    for (const a of r.att) {
+      if (a.start > t) continue;
+      if (a.outcome === "success" && a.stop <= t && !seen.has(a.task_id)) { done++; seen.add(a.task_id); }
+      if (a.outcome === "failed" && a.stop <= t) failed++;
+      if (a.kind === "replica") repl++;
+      if (a.outcome === "failed" || a.outcome === "cancelled") wasted += Math.max(0, Math.min(a.stop, t) - a.start);
+    }
+    return { done, failed, repl, wasted };
+  }
+
+  // ---------------------------------------------------------------- rendering
+  const colorFor = (a, t) => (a.stop > t ? "var(--accent)" : a.outcome === "success" ? "var(--ok)"
+    : a.outcome === "failed" ? "var(--bad)" : "var(--idle)");
+
+  function ticks(maxT) {
+    const raw = maxT / 8, p = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 5, 10].map((m) => m * p).find((s) => s >= raw);
+    const out = [];
+    for (let v = 0; v <= maxT + 1e-9; v += step) out.push(v);
+    return out;
+  }
+
+  function gantt(r, t) {
+    const W = 760, L = 150, R = 10, rowH = 42, top = 8, n = r.workers.length;
+    const H = top + n * rowH + 26;
+    const x = (v) => L + (v / T_MAX) * (W - L - R);
+    const rel = relAt(r, t);
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Gantt chart for ${esc(r.label)}">
+      <defs><pattern id="dn-${r.idx}" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="6" height="6" fill="transparent"/><rect width="2.2" height="6" fill="var(--down)"/></pattern></defs>`;
+    for (const v of ticks(T_MAX)) {
+      s += `<line x1="${x(v)}" x2="${x(v)}" y1="${top}" y2="${top + n * rowH}" stroke="var(--grid)"/>`;
+      s += `<text class="tick" x="${x(v)}" y="${top + n * rowH + 16}" text-anchor="middle">${+v.toFixed(1)}</text>`;
+    }
+    r.workers.forEach((w, i) => {
+      const y = top + i * rowH;
+      const isDown = r.downs.some((d) => d.w === w.id && d.s <= t && t < d.e);
+      const busy = r.att.some((a) => a.worker === w.id && a.start <= t && t < a.stop);
+      const dot = isDown ? "var(--bad)" : busy ? "var(--accent)" : "var(--ok)";
+      const R = rel ? rel[w.id] : null;
+      s += `<circle cx="10" cy="${y + 12}" r="5" fill="${dot}"><title>${isDown ? "down" : busy ? "busy" : "idle"}</title></circle>`;
+      s += `<text x="22" y="${y + 17}" font-size="13" font-weight="600">${esc(w.label)}</text>`;
+      s += `<text class="tick" x="${L - 8}" y="${y + 17}" text-anchor="end">×${fmt(w.speed, 1)}</text>`;
+      if (R !== null && R !== undefined) {
+        s += `<rect x="22" y="${y + 25}" width="74" height="6" rx="3" fill="var(--grid)"/>`;
+        s += `<rect x="22" y="${y + 25}" width="${Math.max(0, Math.min(1, R)) * 74}" height="6" rx="3" fill="${R < 0.75 ? "var(--bad)" : R < 0.88 ? "var(--warn)" : "var(--ok)"}"/>`;
+        s += `<text class="tick" x="102" y="${y + 31}">R ${fmt(R, 2)}</text>`;
+      }
+      s += `<line x1="${L}" x2="${W - R}" y1="${y + rowH}" y2="${y + rowH}" stroke="var(--grid)"/>`;
+      for (const d of r.downs) if (d.w === w.id && d.s <= t) {
+        s += `<rect x="${x(d.s)}" y="${y + 3}" width="${Math.max(1, x(Math.min(d.e, t)) - x(d.s))}" height="${rowH - 6}" fill="url(#dn-${r.idx})" opacity="0.7"/>`;
+      }
+      for (const a of r.att) if (a.worker === w.id && a.start <= t) {
+        const x0 = x(a.start), x1 = x(Math.min(a.stop, t)), bw = Math.max(1.5, x1 - x0);
+        const dash = a.kind === "replica" ? ` stroke="var(--ink)" stroke-dasharray="3 2" stroke-width="1.2"` : "";
+        s += `<rect x="${x0}" y="${y + 6}" width="${bw}" height="${rowH - 12}" rx="3" fill="${colorFor(a, t)}"${dash}>
+          <title>${esc(a.task)} on ${esc(w.label)}: ${a.outcome || "running"}${a.category ? " (" + a.category + ")" : ""}, ${fmt(a.start)}–${fmt(a.stop)}${a.reason ? "\n" + esc(a.reason) : ""}</title></rect>`;
+        if (bw > 26) s += `<text x="${x0 + bw / 2}" y="${y + rowH / 2 + 4}" text-anchor="middle" font-size="12" fill="#fff" style="fill:#fff">${esc(a.task)}</text>`;
+      }
+    });
+    const dl = r.workflow.deadline;
+    if (dl) s += `<line x1="${x(dl)}" x2="${x(dl)}" y1="${top}" y2="${top + n * rowH}" stroke="var(--bad)" stroke-dasharray="5 4"/>`;
+    s += `<line x1="${x(t)}" x2="${x(t)}" y1="${top - 4}" y2="${top + n * rowH}" stroke="var(--ink)" stroke-width="1.5"/>`;
+    return s + "</svg>";
+  }
+
+  function dag(r, t) {
+    const st = taskStates(r, t);
+    const tasks = r.workflow.tasks, cols = r.layers.cols;
+    const many = tasks.length > 24;
+    const colW = many ? 34 : 92, rowH = many ? 22 : 40, nodeW = many ? 18 : 78, nodeH = many ? 14 : 26;
+    const maxRows = Math.max(...cols.map((c) => c.length));
+    const W = Math.max(cols.length * colW + 10, 200), H = maxRows * rowH + 10;
+    const pos = new Map();
+    cols.forEach((col, ci) => col.forEach((id, ri) => {
+      const off = (maxRows - col.length) * rowH / 2;
+      pos.set(id, [5 + ci * colW + (colW - nodeW) / 2, 5 + off + ri * rowH + (rowH - nodeH) / 2]);
+    }));
+    const fill = { done: "var(--ok)", running: "var(--accent)", retry: "var(--bad-soft)", dead: "var(--bad)", ready: "var(--warn-soft)", waiting: "var(--panel)" };
+    const stroke = { done: "var(--ok)", running: "var(--accent)", retry: "var(--bad)", dead: "var(--bad)", ready: "var(--warn)", waiting: "var(--line)" };
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Task graph state">`;
+    for (const tk of tasks) for (const p of tk.preds) {
+      const [x1, y1] = pos.get(p), [x2, y2] = pos.get(tk.id);
+      s += `<line x1="${x1 + nodeW}" y1="${y1 + nodeH / 2}" x2="${x2}" y2="${y2 + nodeH / 2}" stroke="var(--line)" stroke-width="1"/>`;
+    }
+    for (const tk of tasks) {
+      const [x0, y0] = pos.get(tk.id), state = st.get(tk.id);
+      const light = state === "done" || state === "running" || state === "dead";
+      s += `<rect x="${x0}" y="${y0}" width="${nodeW}" height="${nodeH}" rx="5" fill="${fill[state]}" stroke="${stroke[state]}" stroke-width="1.5"><title>${esc(tk.label)}: ${state}</title></rect>`;
+      if (!many) s += `<text x="${x0 + nodeW / 2}" y="${y0 + nodeH / 2 + 4}" text-anchor="middle" font-size="10.5" style="fill:${light ? "#fff" : "var(--ink)"}">${esc(tk.label.length > 11 ? tk.label.slice(0, 10) + "…" : tk.label)}</text>`;
+    }
+    return s + "</svg>";
+  }
+
+  const filters = { dec: true, fail: true, life: false };
+  const show = (k) => (k === "dec" || k === "move" ? filters.dec : k === "fail" || k === "repl" ? filters.fail : filters.life);
+
+  function feed(r, t) {
+    const items = r.log.filter((l) => l.t <= t && show(l.k));
+    const fresh = items.length ? items[items.length - 1].t : -1;
+    return items.slice(-80).reverse().map((l) =>
+      `<li class="${l.k === "life" ? "quiet" : l.k}${l.t === fresh && t - fresh < T_MAX * 0.02 ? " fresh" : ""}"><span class="t">${fmt(l.t)}</span><span class="m">${esc(l.m)}</span></li>`
+    ).join("") || `<li class="quiet"><span class="t"></span><span class="m">Nothing yet. Press Play.</span></li>`;
+  }
+
+  function statusOf(r, t) {
+    if (t < r.end) return ["running", "running"];
+    const m = r.metrics;
+    if (m.completed === false) return ["failed", "workflow failed"];
+    return m.deadline_met === false ? ["missed", `done t=${fmt(r.end)} · deadline missed`] : ["met", `done t=${fmt(r.end)} · deadline met`];
+  }
+
+  // ---------------------------------------------------------------- page structure
+  let shown = RUNS.slice(0, Math.min(RUNS.length, 2)).map((_, i) => i);
+  let time = 0;
+  RUNS.forEach((r, i) => (r.idx = i));
+
+  function buildRuns() {
+    const host = $("runs");
+    host.style.setProperty("--cols", shown.length);
+    host.innerHTML = shown.map((ri, col) => `
+      <article class="run" id="run-${col}">
+        <div class="run-head">
+          <select id="pick-${col}" aria-label="Run shown in column ${col + 1}">${RUNS.map((r, i) =>
+            `<option value="${i}"${i === ri ? " selected" : ""}>${esc(r.label)}</option>`).join("")}</select>
+          <span class="status" id="st-${col}"></span>
+        </div>
+        <div class="counters" id="cnt-${col}"></div>
+        <div class="chart" id="g-${col}"></div>
+        <div class="split">
+          <div class="box"><h3>Task graph</h3><div class="dag" id="d-${col}"></div>
+            <div class="legend"><span><i style="background:var(--warn-soft);border:1px solid var(--warn)"></i>ready</span><span><i style="background:var(--bad-soft);border:1px solid var(--bad)"></i>retry pending</span><span><i style="background:var(--ok)"></i>done</span></div></div>
+          <div class="box"><h3>Decisions and events</h3><ul class="feed" id="f-${col}"></ul></div>
+        </div>
+      </article>`).join("");
+    shown.forEach((_, col) => $(`pick-${col}`).addEventListener("change", (e) => { shown[col] = +e.target.value; rescale(); render(); }));
+  }
+
+  function render() {
+    const t = time;
+    $("clock").textContent = `t = ${fmt(t)} / ${fmt(T_MAX / 1.02)}`;
+    $("scrub").value = Math.round((t / T_MAX) * 1000);
+    shown.forEach((ri, col) => {
+      const r = RUNS[ri];
+      const [cls, txt] = statusOf(r, t);
+      const st = $(`st-${col}`); st.className = `status ${cls}`; st.textContent = txt;
+      const c = counters(r, t), n = r.workflow.tasks.length;
+      $(`cnt-${col}`).innerHTML = [
+        [`${c.done}/${n}`, "tasks done"], [c.failed, "attempts lost"], [c.repl, "replicas"],
+        [fmt(c.wasted), "wasted time"], [fmt(Math.min(t, r.end)), "elapsed"]]
+        .map(([v, l]) => `<div class="counter"><b>${v}</b><span>${l}</span></div>`).join("");
+      $(`g-${col}`).innerHTML = gantt(r, t);
+      $(`d-${col}`).innerHTML = dag(r, t);
+      $(`f-${col}`).innerHTML = feed(r, t);
+    });
+  }
+
+  function buildCompare() {
+    const rows = [
+      ["Workflow completed", (m) => (m.completed ? "yes" : "no"), null],
+      ["Makespan", (m) => (m.completed ? fmt(m.makespan) : "failed"), (m) => (m.completed ? m.makespan : Infinity)],
+      ["Deadline met", (m) => (m.deadline_met ? "yes" : "no"), null],
+      ["Attempts lost", (m) => m.n_failed_attempts, (m) => m.n_failed_attempts],
+      ["Retries", (m) => m.n_retries, (m) => m.n_retries],
+      ["Replicas queued / started", (m) => `${m.n_replicas} / ${m.replicas_started}`, null],
+      ["Wasted work", (m) => fmt(m.wasted_time), (m) => m.wasted_time],
+      ["Resource overhead", (m) => fmt(m.resource_overhead, 2), (m) => m.resource_overhead],
+      ["Mean recovery time", (m) => fmt(m.recovery_time_mean), null],
+      ["Decision time per call (ms)", (m) => fmt(m.mean_decision_ms, 2), null],
+    ];
+    let h = `<thead><tr><th>Metric</th>${RUNS.map((r) => `<th>${esc(r.label)}</th>`).join("")}</tr></thead><tbody>`;
+    for (const [name, get, score] of rows) {
+      const vals = RUNS.map((r) => (score ? score(r.metrics) : null));
+      const best = score ? Math.min(...vals) : null;
+      const unique = score && vals.filter((v) => v === best).length < vals.length;
+      h += `<tr><td>${name}</td>${RUNS.map((r, i) => `<td class="${unique && vals[i] === best ? "best" : ""}">${get(r.metrics)}</td>`).join("")}</tr>`;
+    }
+    $("cmp").innerHTML = h + "</tbody>";
+    $("cmpnote").textContent = DATA.note || "One illustrative run per scheduler on the same workflow and the same failure schedule. The statistical comparison lives in the experiment results.";
+  }
+
+  // ---------------------------------------------------------------- playback
+  let playing = false, last = 0;
+  const speed = () => +$("speed").value;
+  const baseRate = () => T_MAX / 30; // the whole replay takes about 30 s at 1×
+
+  function frame(ts) {
+    if (!playing) return;
+    const dt = last ? (ts - last) / 1000 : 0;
+    last = ts;
+    time = Math.min(T_MAX, time + dt * baseRate() * speed());
+    render();
+    if (time >= T_MAX) setPlaying(false); else requestAnimationFrame(frame);
+  }
+  function setPlaying(p) {
+    playing = p;
+    $("play").textContent = p ? "⏸ Pause" : "▶ Play";
+    if (p) { if (time >= T_MAX) time = 0; last = 0; requestAnimationFrame(frame); }
+  }
+  const jump = (v) => { time = Math.max(0, Math.min(T_MAX, v)); render(); };
+  $("play").addEventListener("click", () => setPlaying(!playing));
+  $("restart").addEventListener("click", () => { setPlaying(false); jump(0); });
+  $("next").addEventListener("click", () => { setPlaying(false); jump(EVENTS.find((e) => e > time + 1e-9) ?? T_MAX); });
+  $("prev").addEventListener("click", () => { setPlaying(false); jump([...EVENTS].reverse().find((e) => e < time - 1e-9) ?? 0); });
+  $("scrub").addEventListener("input", (e) => { setPlaying(false); jump((e.target.value / 1000) * T_MAX); });
+  for (const [id, key] of [["f-dec", "dec"], ["f-fail", "fail"], ["f-life", "life"]]) {
+    $(id).addEventListener("click", (e) => { filters[key] = !filters[key]; e.currentTarget.setAttribute("aria-pressed", filters[key]); render(); });
+  }
+  $("theme").addEventListener("click", () => {
+    const root = document.documentElement;
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
+    if (e.key === " ") { e.preventDefault(); setPlaying(!playing); }
+    else if (e.key === "ArrowRight") $("next").click();
+    else if (e.key === "ArrowLeft") $("prev").click();
+    else if (e.key === "Home") $("restart").click();
+    else if (e.key === "End") { setPlaying(false); jump(T_MAX); }
+  });
+
+  $("title").textContent = DATA.title || `Schedule replay: ${RUNS[0].workflow.name}`;
+  $("subtitle").textContent = DATA.subtitle || [RUNS[0].workflow.name + ` · ${RUNS[0].workflow.tasks.length} tasks · ${RUNS[0].workers.length} workers`, RUNS[0].scenario].filter(Boolean).join(" · ");
+  document.title = DATA.title || "Schedule Replay";
+  rescale();
+  buildRuns();
+  buildCompare();
+  render();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+- generic [active] [ref=e1]:
+  - main [ref=e5]:
+    - text:  
+    - generic [ref=e34]:
+      - generic [ref=e35]:
+        - button "Back" [ref=e36] [cursor=pointer]
+        - text: Letterhead Settings
+      - generic [ref=e39]:
+        - button "Prescription" [ref=e40] [cursor=pointer]
+        - button "Investigation" [ref=e41] [cursor=pointer]
+        - button "Referral" [ref=e42] [cursor=pointer]
+      - generic [ref=e43]:
+        - generic [ref=e44]:
+          - generic [ref=e45]: Upload Letterhead Image
+          - generic [ref=e47]:
+            - generic [ref=e48]: Content Top Offset (15%)
+            - slider [ref=e49]: "15"
+          - generic [ref=e50]:
+            - generic [ref=e51]: Content Left Offset (4em)
+            - slider [ref=e52]: "4"
+          - generic [ref=e53]:
+            - generic [ref=e54]: Letterhead Height (400mm)
+            - slider [ref=e55]: "400"
+          - button "Save Prescription Letterhead" [ref=e56] [cursor=pointer]
+        - generic [ref=e62]:
+          - generic [ref=e63]:
+            - paragraph [ref=e65]: "Patient Name: Test Patient"
+            - generic [ref=e66]: "Age: 32"
+            - generic [ref=e67]: "Date: 01/01/2026"
+          - generic [ref=e68]:
+            - generic [ref=e69]: Allergy To:-
+            - generic [ref=e70]: No H/O allergy to any drugs
+          - generic [ref=e72]:
+            - generic [ref=e73]: S.No
+            - generic [ref=e74]: Name
+            - generic [ref=e75]: Dosage
+            - generic [ref=e76]: Frequency
+            - generic [ref=e77]: Days
+            - generic [ref=e78]: AF/BF
+          - generic [ref=e79]:
+            - generic [ref=e80]: "1"
+            - generic [ref=e81]: Sample Medicine
+            - generic [ref=e82]: 500mg
+            - generic [ref=e83]: 1-0-1
+            - generic [ref=e84]: 5 Days
+            - generic [ref=e85]: AF
+          - generic [ref=e87]:
+            - generic [ref=e88]: Dr. Sample
+            - paragraph [ref=e91]: Doctor's Signature
+  - iframe [ref=e26]:
+    - generic [ref=f2e2]:
+      - generic [ref=f2e3]: ERROR for site owner:Invalid domain for site key
+      - generic [ref=f2e7]: reCAPTCHA
+  - text: 

@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Schedule Replay</title>
+<style>
+/* Layout: control bar on top; runs side by side (Gantt + worker health, task graph, decision feed); final comparison table below.
+   System fonts only, so the page works offline on a projector laptop. */
+:root {
+  --bg: #f4f6f9; --panel: #ffffff; --ink: #141b24; --muted: #5d6877; --line: #d9dee6; --grid: #eceff4;
+  --accent: #2c55c9; --accent-soft: #dfe7fb;
+  --ok: #2b8a5a; --ok-soft: #dcefe4; --bad: #c4432c; --bad-soft: #f8e1dc;
+  --warn: #b26b00; --warn-soft: #f8ead2; --idle: #b9c1cc; --down: #8b95a3;
+  --font-ui: "Segoe UI", "Helvetica Neue", system-ui, -apple-system, Arial, sans-serif;
+  --font-mono: "Cascadia Mono", "SF Mono", Consolas, "Liberation Mono", monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --panel: #161d26; --ink: #e6ebf2; --muted: #98a3b3; --line: #2a3442; --grid: #1f2833;
+    --accent: #7f9dff; --accent-soft: #23305a; --ok: #5fcf95; --ok-soft: #173a29; --bad: #ff8a72; --bad-soft: #43231d;
+    --warn: #f1b75e; --warn-soft: #3d2d12; --idle: #3b4656; --down: #6d7887; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --panel: #161d26; --ink: #e6ebf2; --muted: #98a3b3; --line: #2a3442; --grid: #1f2833;
+  --accent: #7f9dff; --accent-soft: #23305a; --ok: #5fcf95; --ok-soft: #173a29; --bad: #ff8a72; --bad-soft: #43231d;
+  --warn: #f1b75e; --warn-soft: #3d2d12; --idle: #3b4656; --down: #6d7887; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 15px; line-height: 1.45; }
+.page { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 16px 40px; display: grid; gap: 16px; max-width: 1800px; margin: 0 auto; }
+h1 { font-size: 1.35rem; margin: 0; text-wrap: balance; }
+h2 { font-size: 1.05rem; margin: 0; }
+.sub { color: var(--muted); font-size: 0.9rem; }
+.mono, .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* control bar */
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+.bar .grow { flex: 1 1 260px; display: flex; align-items: center; gap: 10px; min-width: 0; }
+button, select { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 6px 11px; cursor: pointer; }
+button:hover, select:hover { border-color: var(--accent); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; min-width: 5.5rem; font-weight: 600; }
+input[type=range] { flex: 1; min-width: 120px; accent-color: var(--accent); }
+.clock { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 1.05rem; min-width: 8.5rem; text-align: right; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { font-size: 0.8rem; padding: 4px 9px; border-radius: 999px; }
+.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+
+/* runs */
+.runs { display: grid; gap: 16px; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); }
+.run { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 12px; min-width: 0; align-content: start; }
+.run-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 14px; align-items: baseline; }
+.run-head select { font-weight: 700; font-size: 1rem; }
+.status { font-family: var(--font-mono); font-size: 0.8rem; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.status.running { background: var(--accent-soft); color: var(--accent); }
+.status.met { background: var(--ok-soft); color: var(--ok); }
+.status.missed { background: var(--warn-soft); color: var(--warn); }
+.status.failed { background: var(--bad-soft); color: var(--bad); }
+.counters { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.counter { border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; min-width: 0; }
+.counter b { display: block; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 1.15rem; }
+.counter span { color: var(--muted); font-size: 0.75rem; }
+.chart { overflow-x: auto; }
+.chart svg { display: block; width: 100%; min-width: 520px; height: auto; }
+.dag svg { display: block; width: 100%; height: auto; max-height: 320px; }
+svg text { fill: var(--ink); font-family: var(--font-ui); }
+svg .tick { fill: var(--muted); font-family: var(--font-mono); font-size: 11px; }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.box { border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-width: 0; display: grid; gap: 6px; align-content: start; }
+.box h3 { margin: 0; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.feed { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; font-size: 0.84rem; display: grid; gap: 2px; }
+.feed li { display: grid; grid-template-columns: 4.2rem minmax(0, 1fr); gap: 8px; padding: 3px 6px; border-radius: 5px; }
+.feed li .t { font-family: var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.feed li.fail { background: var(--bad-soft); }
+.feed li.repl { background: var(--warn-soft); }
+.feed li.move { background: var(--accent-soft); }
+.feed li.dec .m { font-weight: 600; }
+.feed li.quiet .m { color: var(--muted); }
+.feed li.fresh { outline: 2px solid var(--accent); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.8rem; color: var(--muted); }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 5px; }
+
+/* comparison */
+.compare { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 10px; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+thead th { color: var(--muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+td.best { color: var(--ok); font-weight: 700; }
+.note { color: var(--muted); font-size: 0.82rem; }
+
+@media (max-width: 1100px) { .runs { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) {
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .counters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<script id="rdas-data" type="application/json">{"runs": [{"format": "rdas-run/1", "label": "eft-retry", "scheduler": "eft-retry", "scenario": "real workers (3); W1 down at t=8 for 10", "end_time": 43.787187353324654, "workflow": {"name": "demo-pipeline", "deadline": 70.0, "tasks": [{"id": 0, "label": "ingest", "work": 6.0, "type": "sleep", "preds": []}, {"id": 1, "label": "clean_a", "work": 8.0, "type": "cpu_benchmark", "preds": [0]}, {"id": 2, "label": "clean_b", "work": 8.0, "type": "hash_payload", "preds": [0]}, {"id": 3, "label": "clean_c", "work": 6.0, "type": "cpu_benchmark", "preds": [0]}, {"id": 4, "label": "features", "work": 10.0, "type": "cpu_benchmark", "preds": [1, 2]}, {"id": 5, "label": "validate", "work": 6.0, "type": "fail_once", "preds": [3]}, {"id": 6, "label": "train", "work": 12.0, "type": "cpu_benchmark", "preds": [4, 5]}, {"id": 7, "label": "evaluate", "work": 6.0, "type": "sleep", "preds": [6]}, {"id": 8, "label": "report", "work": 4.0, "type": "hash_payload", "preds": [6]}, {"id": 9, "label": "publish", "work": 3.0, "type": "sleep", "preds": [7, 8]}]}, "workers": [{"id": 0, "label": "worker-1", "speed": 1.0}, {"id": 1, "label": "worker-2", "speed": 1.5}, {"id": 2, "label": "worker-3", "speed": 0.8}], "attempts": [{"attempt": 0, "task": "ingest", "task_id": 0, "worker": 1, "kind": "primary", "queued_at": 0.0, "start": 0.0, "end": 4.079872999997558, "outcome": "success", "category": null, "expected_duration": 4.0, "actual_duration": 4.079872999997558, "est_p_success": 0.9350208824405831, "reason": "single copy"}, {"attempt": 1, "task": "clean_a", "task_id": 1, "worker": 1, "kind": "primary", "queued_at": 4.079872999997558, "start": 4.079872999997558, "end": 8.135785613327851, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 5.333333333333333, "actual_duration": 4.055912613330293, "est_p_success": 0.9350418571603807, "reason": "single copy"}, {"attempt": 2, "task": "clean_b", "task_id": 2, "worker": 0, "kind": "primary", "queued_at": 4.079872999997558, "start": 4.079872999997558, "end": 12.128808713326483, "outcome": "success", "category": null, "expected_duration": 8.0, "actual_duration": 8.048935713328927, "est_p_success": 0.9047052733843725, "reason": "single copy"}, {"attempt": 3, "task": "clean_c", "task_id": 3, "worker": 2, "kind": "primary", "queued_at": 4.079872999997558, "start": 4.079872999997558, "end": 11.637711433322693, "outcome": "success", "category": null, "expected_duration": 7.5, "actual_duration": 7.557838433325135, "est_p_success": 0.9103856984904471, "reason": "single copy"}, {"attempt": 4, "task": "clean_a", "task_id": 1, "worker": 0, "kind": "primary", "queued_at": 8.135785613327851, "start": 12.128808713326483, "end": 20.179959646666248, "outcome": "success", "category": null, "expected_duration": 8.0, "actual_duration": 8.051150933339764, "est_p_success": 0.8423986641348509, "reason": "all copies failed: retry"}, {"attempt": 5, "task": "validate", "task_id": 5, "worker": 2, "kind": "primary", "queued_at": 11.637711433322693, "start": 11.637711433322693, "end": 15.420049393324007, "outcome": "failed", "category": "injected", "expected_duration": 7.5, "actual_duration": 3.782337960001314, "est_p_success": 0.8695839197414839, "reason": "single copy"}, {"attempt": 6, "task": "validate", "task_id": 5, "worker": 2, "kind": "primary", "queued_at": 15.420049393324007, "start": 15.420049393324007, "end": 22.957125486658093, "outcome": "success", "category": null, "expected_duration": 7.5, "actual_duration": 7.537076093334086, "est_p_success": 0.7387762616373799, "reason": "all copies failed: retry"}, {"attempt": 7, "task": "features", "task_id": 4, "worker": 1, "kind": "primary", "queued_at": 20.179959646666248, "start": 20.179959646666248, "end": 26.894900526664667, "outcome": "success", "category": null, "expected_duration": 6.666666666666667, "actual_duration": 6.714940879998419, "est_p_success": 0.7617656506969195, "reason": "single copy"}, {"attempt": 8, "task": "train", "task_id": 6, "worker": 1, "kind": "primary", "queued_at": 26.894900526664667, "start": 26.894900526664667, "end": 34.932574159999305, "outcome": "success", "category": null, "expected_duration": 8.0, "actual_duration": 8.037673633334638, "est_p_success": 0.7700548615846188, "reason": "single copy"}, {"attempt": 9, "task": "evaluate", "task_id": 7, "worker": 1, "kind": "primary", "queued_at": 34.932574159999305, "start": 34.932574159999305, "end": 38.97652752665939, "outcome": "success", "category": null, "expected_duration": 4.0, "actual_duration": 4.043953366660084, "est_p_success": 0.9009005669163492, "reason": "single copy"}, {"attempt": 10, "task": "report", "task_id": 8, "worker": 0, "kind": "primary", "queued_at": 34.932574159999305, "start": 34.932574159999305, "end": 38.97652752665939, "outcome": "success", "category": null, "expected_duration": 4.0, "actual_duration": 4.043953366660084, "est_p_success": 0.953639556589547, "reason": "single copy"}, {"attempt": 11, "task": "publish", "task_id": 9, "worker": 1, "kind": "primary", "queued_at": 38.97652752665939, "start": 38.97652752665939, "end": 40.59024122666112, "outcome": "failed", "category": "injected", "expected_duration": 2.0, "actual_duration": 1.6137137000017319, "est_p_success": 0.9537939124772441, "reason": "single copy"}, {"attempt": 12, "task": "publish", "task_id": 9, "worker": 1, "kind": "primary", "queued_at": 40.59024122666112, "start": 40.59024122666112, "end": 41.75540915999591, "outcome": "failed", "category": "injected", "expected_duration": 2.0, "actual_duration": 1.1651679333347857, "est_p_success": 0.9234407231674719, "reason": "all copies failed: retry"}, {"attempt": 13, "task": "publish", "task_id": 9, "worker": 1, "kind": "primary", "queued_at": 41.75540915999591, "start": 41.75540915999591, "end": 43.787187353324654, "outcome": "success", "category": null, "expected_duration": 2.0, "actual_duration": 2.0317781933287478, "est_p_success": 0.8947723355739716, "reason": "all copies failed: retry"}], "down": [[1, 8.135785613327851, 18.463455753323313]], "log": [[0.0, "ingest started on W1"], [4.079872999997558, "ingest succeeded on W1 (took 4.1)"], [4.079872999997558, "clean_b started on W0"], [4.079872999997558, "clean_a started on W1"], [4.079872999997558, "clean_c started on W2"], [8.135785613327851, "W1 UNAVAILABLE - running clean_a lost after 4.1"], [11.637711433322693, "clean_c succeeded on W2 (took 7.6)"], [11.637711433322693, "validate started on W2"], [12.128808713326483, "clean_b succeeded on W0 (took 8.0)"], [12.128808713326483, "clean_a started on W0"], [15.420049393324007, "validate FAILED on W2 [injected]: fail_once: injected failure on attempt 1"], [15.420049393324007, "validate started on W2"], [18.463455753323313, "W1 available again"], [20.179959646666248, "clean_a succeeded on W0 (took 8.1)"], [20.179959646666248, "features started on W1"], [22.957125486658093, "validate succeeded on W2 (took 7.5)"], [26.894900526664667, "features succeeded on W1 (took 6.7)"], [26.894900526664667, "train started on W1"], [34.932574159999305, "train succeeded on W1 (took 8.0)"], [34.932574159999305, "report started on W0"], [34.932574159999305, "evaluate started on W1"], [38.97652752665939, "report succeeded on W0 (took 4.0)"], [38.97652752665939, "evaluate succeeded on W1 (took 4.0)"], [38.97652752665939, "publish started on W1"], [40.59024122666112, "publish FAILED on W1 [injected]: configured failure (rate 0.3)"], [40.59024122666112, "publish started on W1"], [41.75540915999591, "publish FAILED on W1 [injected]: configured failure (rate 0.3)"], [41.75540915999591, "publish started on W1"], [43.787187353324654, "publish succeeded on W1 (took 2.0)"]], "reliability": [[0.0, [0.9, 0.9, 0.9]], [4.079872999997558, [0.9245, 0.9245, 0.9245]], [8.135785613327851, [0.8742, 0.7848, 0.8742]], [11.637711433322693, [0.8899, 0.7936, 0.8899]], [12.128808713326483, [0.8919, 0.7947, 0.8919]], [15.420049393324007, [0.8553, 0.7538, 0.7768]], [20.179959646666248, [0.8785, 0.7753, 0.8042]], [22.957125486658093, [0.8914, 0.7938, 0.8194]], [26.894900526664667, [0.9064, 0.8158, 0.8376]], [34.932574159999305, [0.9285, 0.8498, 0.866]], [38.97652752665939, [0.9367, 0.863, 0.8771]], [38.97652752665939, [0.9367, 0.863, 0.8771]], [40.59024122666112, [0.9176, 0.7804, 0.8605]], [41.75540915999591, [0.8995, 0.7074, 0.8444]], [43.787187353324654, [0.9049, 0.7174, 0.8509]]], "metrics": {"scheduler": "eft-retry", "workflow": "demo-pipeline", "n_tasks": 10, "n_workers": 3, "completed": true, "makespan": 43.787187353324654, "deadline": 70.0, "deadline_met": true, "n_attempts": 14, "n_failed_attempts": 4, "n_replicas": 0, "n_cancelled": 0, "n_revoked": 0, "n_crashes": 1, "busy_time": 70.76430581997556, "useful_time": 60.147173613307444, "wasted_time": 10.617132206668124, "decision_time_total": 0.0015183870018518064, "n_decisions": 11, "end_time": 43.787187353324654, "tasks_succeeded": 10, "n_retries": 4, "replicas_started": 0, "recovery_time_mean": 7.5927320844453385, "resource_overhead": 0.17651922058593797, "mean_decision_ms": 0.13803518198652787, "task_success_rate": 1.0, "utilization": 0.5386987236621598, "fail_worker_unavailable": 1, "fail_injected": 3, "fail_timeout": 0, "fail_dispatch_error": 0, "fail_task_error": 0, "n_task_retries": 4, "ft_execute": 10, "ft_retry": 4, "ft_replicate": 0, "replicas_requested": 0, "replica_shortfall": 0, "n_reassign_decisions": 0, "wall_seconds": 6.57}}, {"format": "rdas-run/1", "label": "adaptive", "scheduler": "adaptive", "scenario": "real workers (3); W1 down at t=8 for 10", "end_time": 44.77845341333402, "workflow": {"name": "demo-pipeline", "deadline": 70.0, "tasks": [{"id": 0, "label": "ingest", "work": 6.0, "type": "sleep", "preds": []}, {"id": 1, "label": "clean_a", "work": 8.0, "type": "cpu_benchmark", "preds": [0]}, {"id": 2, "label": "clean_b", "work": 8.0, "type": "hash_payload", "preds": [0]}, {"id": 3, "label": "clean_c", "work": 6.0, "type": "cpu_benchmark", "preds": [0]}, {"id": 4, "label": "features", "work": 10.0, "type": "cpu_benchmark", "preds": [1, 2]}, {"id": 5, "label": "validate", "work": 6.0, "type": "fail_once", "preds": [3]}, {"id": 6, "label": "train", "work": 12.0, "type": "cpu_benchmark", "preds": [4, 5]}, {"id": 7, "label": "evaluate", "work": 6.0, "type": "sleep", "preds": [6]}, {"id": 8, "label": "report", "work": 4.0, "type": "hash_payload", "preds": [6]}, {"id": 9, "label": "publish", "work": 3.0, "type": "sleep", "preds": [7, 8]}]}, "workers": [{"id": 0, "label": "worker-1", "speed": 1.0}, {"id": 1, "label": "worker-2", "speed": 1.5}, {"id": 2, "label": "worker-3", "speed": 0.8}], "attempts": [{"attempt": 0, "task": "ingest", "task_id": 0, "worker": 1, "kind": "primary", "queued_at": 0.0, "start": 0.0, "end": 4.0444697800073, "outcome": "success", "category": null, "expected_duration": 4.0, "actual_duration": 4.0444697800073, "est_p_success": 0.9350208824405831, "reason": "single copy (p_success=0.94; replica not worth it)"}, {"attempt": 1, "task": "clean_a", "task_id": 1, "worker": 1, "kind": "primary", "queued_at": 4.0444697800073, "start": 4.0444697800073, "end": 8.14896670000356, "outcome": "failed", "category": "worker_unavailable", "expected_duration": 5.333333333333333, "actual_duration": 4.104496919996261, "est_p_success": 0.9350623195554616, "reason": "single copy (p_success=0.94; replica not worth it)"}, {"attempt": 2, "task": "clean_b", "task_id": 2, "worker": 0, "kind": "primary", "queued_at": 4.0444697800073, "start": 4.0444697800073, "end": 12.095961633337236, "outcome": "success", "category": null, "expected_duration": 8.0, "actual_duration": 8.051491853329935, "est_p_success": 0.9044951242661021, "reason": "single copy (p_success=0.90; replica not worth it)"}, {"attempt": 3, "task": "clean_c", "task_id": 3, "worker": 2, "kind": "primary", "queued_at": 4.0444697800073, "start": 4.0444697800073, "end": 11.599127659998583, "outcome": "success", "category": null, "expected_duration": 7.5, "actual_duration": 7.554657879991283, "est_p_success": 0.9101874452446999, "reason": "single copy (p_success=0.91; replica not worth it)"}, {"attempt": 4, "task": "clean_a", "task_id": 1, "worker": 0, "kind": "primary", "queued_at": 8.14896670000356, "start": 12.095961633337236, "end": 20.137925666664767, "outcome": "success", "category": null, "expected_duration": 8.0, "actual_duration": 8.041964033327531, "est_p_success": 0.8425045040348305, "reason": "retry on a different worker (p_success=0.84; replica not worth it)"}, {"attempt": 5, "task": "validate", "task_id": 5, "worker": 2, "kind": "primary", "queued_at": 11.599127659998583, "start": 11.599127659998583, "end": 15.39688362000258, "outcome": "failed", "category": "injected", "expected_duration": 7.5, "actual_duration": 3.7977559600039967, "est_p_success": 0.869435766934079, "reason": "single copy (p_success=0.87; replica not worth it)"}, {"attempt": 6, "task": "validate", "task_id": 5, "worker": 0, "kind": "primary", "queued_at": 15.39688362000258, "start": null, "end": null, "outcome": "revoked", "category": null, "expected_duration": 6.0, "actual_duration": null, "est_p_success": 0.8608312330334851, "reason": "retry on a different worker (p_success=0.86; replica not worth it)"}, {"attempt": 7, "task": "validate", "task_id": 5, "worker": 1, "kind": "primary", "queued_at": 18.686339586674876, "start": 18.686339586674876, "end": 21.27821460000026, "outcome": "failed", "category": "injected", "expected_duration": 4.0, "actual_duration": 2.591875013325385, "est_p_success": 0.8410862081531836, "reason": "reassigned: W0 now expected 8.5 vs 5.3"}, {"attempt": 8, "task": "features", "task_id": 4, "worker": 1, "kind": "primary", "queued_at": 20.137925666664767, "start": 21.27821460000026, "end": 27.98385268666607, "outcome": "success", "category": null, "expected_duration": 6.666666666666667, "actual_duration": 6.705638086665807, "est_p_success": 0.7609248763557266, "reason": "single copy (p_success=0.76; replica not worth it)"}, {"attempt": 9, "task": "validate", "task_id": 5, "worker": 0, "kind": "primary", "queued_at": 21.27821460000026, "start": 21.27821460000026, "end": 27.3198188066696, "outcome": "success", "category": null, "expected_duration": 6.0, "actual_duration": 6.041604206669337, "est_p_success": 0.8513225420688613, "reason": "retry on a different worker"}, {"attempt": 10, "task": "train", "task_id": 6, "worker": 1, "kind": "primary", "queued_at": 27.98385268666607, "start": 27.98385268666607, "end": 36.03217763999662, "outcome": "success", "category": null, "expected_duration": 8.0, "actual_duration": 8.04832495333055, "est_p_success": 0.6579056641979111, "reason": "single copy (p_success=0.66; replica not worth it)"}, {"attempt": 11, "task": "evaluate", "task_id": 7, "worker": 1, "kind": "primary", "queued_at": 36.03217763999662, "start": 36.03217763999662, "end": 40.08905438667474, "outcome": "success", "category": null, "expected_duration": 4.0, "actual_duration": 4.056876746678121, "est_p_success": 0.8432520179736887, "reason": "single copy (p_success=0.84; replica not worth it)"}, {"attempt": 12, "task": "report", "task_id": 8, "worker": 0, "kind": "primary", "queued_at": 36.03217763999662, "start": 36.03217763999662, "end": 40.08905438667474, "outcome": "success", "category": null, "expected_duration": 4.0, "actual_duration": 4.056876746678121, "est_p_success": 0.9398856585477333, "reason": "single copy (p_success=0.94; replica not worth it)"}, {"attempt": 13, "task": "publish", "task_id": 9, "worker": 1, "kind": "primary", "queued_at": 40.08905438667474, "start": 40.08905438667474, "end": 41.70039936000346, "outcome": "failed", "category": "injected", "expected_duration": 2.0, "actual_duration": 1.6113449733287197, "est_p_success": 0.9249986006101, "reason": "single copy (p_success=0.92; replica not worth it)"}, {"attempt": 14, "task": "publish", "task_id": 9, "worker": 0, "kind": "primary", "queued_at": 41.70039936000346, "start": 41.70039936000346, "end": 44.77845341333402, "outcome": "success", "category": null, "expected_duration": 3.0, "actual_duration": 3.078054053330561, "est_p_success": 0.9509649237226667, "reason": "retry on a different worker (p_success=0.95; replica not worth it)"}], "down": [[1, 8.14896670000356, 18.686339586674876]], "log": [[0.0, "ingest -> W1 (p_success=0.94)"], [0.0, "ingest started on W1"], [4.0444697800073, "ingest succeeded on W1 (took 4.0)"], [4.0444697800073, "clean_a -> W1 (p_success=0.94)"], [4.0444697800073, "clean_b -> W0 (p_success=0.90); avoided earliest-finish W1 (p_success=0.94)"], [4.0444697800073, "clean_c -> W2 (p_success=0.91); avoided earliest-finish W1 (p_success=0.95)"], [4.0444697800073, "clean_b started on W0"], [4.0444697800073, "clean_a started on W1"], [4.0444697800073, "clean_c started on W2"], [8.14896670000356, "W1 UNAVAILABLE - running clean_a lost after 4.1"], [8.14896670000356, "clean_a -> W0 (p_success=0.84) [retry]"], [11.599127659998583, "clean_c succeeded on W2 (took 7.6)"], [11.599127659998583, "validate -> W2 (p_success=0.87)"], [11.599127659998583, "validate started on W2"], [12.095961633337236, "clean_b succeeded on W0 (took 8.1)"], [12.095961633337236, "clean_a started on W0"], [15.39688362000258, "validate FAILED on W2 [injected]: fail_once: injected failure on attempt 1"], [15.39688362000258, "validate -> W0 (p_success=0.86); avoided earliest-finish W2 (p_success=0.74) [retry]"], [18.686339586674876, "W1 available again"], [18.686339586674876, "reassign validate: W0 now expected 8.5 vs 5.3 -> W1"], [18.686339586674876, "  reassign: validate withdrawn from W0's queue"], [18.686339586674876, "validate started on W1"], [20.137925666664767, "clean_a succeeded on W0 (took 8.0)"], [20.137925666664767, "features -> W1 (p_success=0.76)"], [21.27821460000026, "validate FAILED on W1 [injected]: configured failure (rate 0.3)"], [21.27821460000026, "validate -> W0 (p_success=0.85) [retry]"], [21.27821460000026, "validate started on W0"], [21.27821460000026, "features started on W1"], [27.3198188066696, "validate succeeded on W0 (took 6.0)"], [27.98385268666607, "features succeeded on W1 (took 6.7)"], [27.98385268666607, "train -> W1 (p_success=0.66)"], [27.98385268666607, "train started on W1"], [36.03217763999662, "train succeeded on W1 (took 8.0)"], [36.03217763999662, "evaluate -> W1 (p_success=0.84)"], [36.03217763999662, "report -> W0 (p_success=0.94); avoided earliest-finish W1 (p_success=0.89)"], [36.03217763999662, "report started on W0"], [36.03217763999662, "evaluate started on W1"], [40.08905438667474, "evaluate succeeded on W1 (took 4.1)"], [40.08905438667474, "report succeeded on W0 (took 4.1)"], [40.08905438667474, "publish -> W1 (p_success=0.92)"], [40.08905438667474, "publish started on W1"], [41.70039936000346, "publish FAILED on W1 [injected]: configured failure (rate 0.3)"], [41.70039936000346, "publish -> W0 (p_success=0.95); avoided earliest-finish W1 (p_success=0.90) [retry]"], [41.70039936000346, "publish started on W0"], [44.77845341333402, "publish succeeded on W0 (took 3.1)"]], "reliability": [[0.0, [0.9, 0.9, 0.9]], [4.0444697800073, [0.9243, 0.9243, 0.9243]], [8.14896670000356, [0.8743, 0.7849, 0.8743]], [11.599127659998583, [0.8898, 0.7936, 0.8898]], [12.095961633337236, [0.8918, 0.7947, 0.8918]], [15.39688362000258, [0.8552, 0.7538, 0.7766]], [20.137925666664767, [0.878, 0.774, 0.8037]], [21.27821460000026, [0.8455, 0.67, 0.7753]], [27.3198188066696, [0.8771, 0.7167, 0.8109]], [27.98385268666607, [0.8799, 0.7211, 0.8142]], [36.03217763999662, [0.9077, 0.7664, 0.8476]], [40.08905438667474, [0.9181, 0.7845, 0.8606]], [40.08905438667474, [0.9181, 0.7845, 0.8606]], [41.70039936000346, [0.9009, 0.7125, 0.8457]], [44.77845341333402, [0.9088, 0.7272, 0.8554]]], "metrics": {"scheduler": "adaptive", "workflow": "demo-pipeline", "n_tasks": 10, "n_workers": 3, "completed": true, "makespan": 44.77845341333402, "deadline": 70.0, "deadline_met": true, "n_attempts": 15, "n_failed_attempts": 4, "n_replicas": 0, "n_cancelled": 0, "n_revoked": 1, "n_crashes": 1, "busy_time": 71.7854312066629, "useful_time": 59.67995834000855, "wasted_time": 12.105472866654363, "decision_time_total": 0.006302695999693242, "n_decisions": 12, "end_time": 44.77845341333402, "tasks_succeeded": 10, "n_retries": 4, "replicas_started": 0, "recovery_time_mean": 8.996649402219596, "resource_overhead": 0.20283983439946598, "mean_decision_ms": 0.5252246666411035, "task_success_rate": 1.0, "utilization": 0.5343747995941788, "fail_worker_unavailable": 1, "fail_injected": 3, "fail_timeout": 0, "fail_dispatch_error": 0, "fail_task_error": 0, "n_task_retries": 4, "ft_execute": 10, "ft_retry": 4, "ft_replicate": 0, "replicas_requested": 0, "replica_shortfall": 0, "n_reassign_decisions": 1, "n_solver_calls": 0, "solver_time": 0.0, "solver_build_time": 0.0, "solver_anneal_time": 0.0, "solver_vars": 0, "qubo_infeasible": 0, "qubo_infeasible_tasks": 0, "greedy_gap_sum": 0.0, "mean_solver_ms": 0.0, "mean_solver_build_ms": 0.0, "mean_solver_anneal_ms": 0.0, "mean_solver_vars": 0.0, "qubo_feasibility_rate": 1.0, "wall_seconds": 6.72}}], "title": "Schedule replay: real worker containers", "subtitle": "", "note": "Real execution on HTTP worker agents. Single demonstration runs; timings include HTTP and host noise."}</script>
+<div class="page">
+  <header>
+    <h1 id="title">Schedule replay</h1>
+    <div class="sub" id="subtitle"></div>
+  </header>
+
+  <div class="bar" role="toolbar" aria-label="Playback">
+    <button id="restart" title="Back to start (Home)">⏮</button>
+    <button id="prev" title="Previous event (←)">◀ event</button>
+    <button id="play" class="primary" title="Play / pause (Space)">▶ Play</button>
+    <button id="next" title="Next event (→)">event ▶</button>
+    <label class="sub" for="speed">Speed</label>
+    <select id="speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+    <div class="grow"><input id="scrub" type="range" min="0" max="1000" value="0" aria-label="Simulated time"><span class="clock" id="clock">t = 0.0</span></div>
+    <div class="chips" aria-label="Decision feed filter">
+      <button class="chip" id="f-dec" aria-pressed="true">Decisions</button>
+      <button class="chip" id="f-fail" aria-pressed="true">Failures</button>
+      <button class="chip" id="f-life" aria-pressed="false">Starts / finishes</button>
+    </div>
+    <button id="theme" title="Toggle light / dark">◐</button>
+  </div>
+
+  <div class="legend">
+    <span><i style="background:var(--ok)"></i>succeeded</span>
+    <span><i style="background:var(--accent)"></i>running</span>
+    <span><i style="background:var(--bad)"></i>lost / failed</span>
+    <span><i style="background:var(--idle)"></i>cancelled replica</span>
+    <span><i style="background:repeating-linear-gradient(45deg,var(--down) 0 2px,transparent 2px 5px)"></i>worker down</span>
+    <span><i style="border:2px dashed var(--ink);background:transparent"></i>replica copy</span>
+    <span>│ dashed red = deadline</span>
+  </div>
+
+  <div class="runs" id="runs"></div>
+
+  <section class="compare">
+    <h2>Final result</h2>
+    <div class="tablewrap"><table id="cmp"></table></div>
+    <p class="note" id="cmpnote"></p>
+  </section>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const DATA = JSON.parse(document.getElementById("rdas-data").textContent);
+  const RUNS = DATA.runs;
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const fmt = (x, d = 1) => (x === null || x === undefined || Number.isNaN(x) ? "–" : Number(x).toFixed(d));
+
+  // ---------------------------------------------------------------- prepare runs
+  for (const r of RUNS) {
+    r.end = r.end_time || Math.max(0, ...r.attempts.map((a) => a.end || 0));
+    r.att = r.attempts.filter((a) => a.start !== null && a.start !== undefined);
+    for (const a of r.att) a.stop = a.end === null || a.end === undefined ? r.end : a.end;
+    r.downs = r.down.map(([w, s, e]) => ({ w, s, e: e === null ? r.end : e }));
+    r.rel = r.reliability; // [[t, [R...]]] sorted by t
+    r.layers = layout(r.workflow.tasks);
+    r.log = r.log.map(([t, m], i) => ({ t, m, i, k: kind(m) }));
+  }
+  // Time scale and event list cover only the runs on screen, so one long run elsewhere
+  // (e.g. a failed static-HEFT run) does not squash the comparison.
+  let T_MAX = 1, EVENTS = [];
+  function rescale() {
+    const rs = shown.map((i) => RUNS[i]);
+    T_MAX = Math.max(...rs.map((r) => r.end), ...rs.map((r) => r.workflow.deadline || 0)) * 1.02 || 1;
+    EVENTS = [...new Set(rs.flatMap((r) => [
+      ...r.att.flatMap((a) => [a.start, a.stop]), ...r.downs.flatMap((d) => [d.s, d.e]), ...r.log.map((l) => l.t)]))]
+      .filter((t) => t > 0).sort((a, b) => a - b);
+    time = Math.min(time, T_MAX);
+  }
+
+  function kind(m) {
+    if (/UNAVAILABLE|FAILED|CHAOS|lost/.test(m)) return "fail";
+    if (/REPLICA|replica/.test(m) && !/cancelled/.test(m)) return "repl";
+    if (/reassign|withdrawn|available again/.test(m)) return "move";
+    if (/->/.test(m)) return "dec";
+    return "life";
+  }
+
+  function layout(tasks) {
+    const layer = new Map();
+    const byId = new Map(tasks.map((t) => [t.id, t]));
+    const depth = (id) => {
+      if (layer.has(id)) return layer.get(id);
+      const t = byId.get(id);
+      const d = t.preds.length ? 1 + Math.max(...t.preds.map(depth)) : 0;
+      layer.set(id, d);
+      return d;
+    };
+    tasks.forEach((t) => depth(t.id));
+    const cols = [];
+    tasks.forEach((t) => { const d = layer.get(t.id); (cols[d] = cols[d] || []).push(t.id); });
+    return { layer, cols };
+  }
+
+  // ---------------------------------------------------------------- state at time t
+  function taskStates(r, t) {
+    const st = new Map();
+    const done = new Set();
+    for (const a of r.att) if (a.outcome === "success" && a.stop <= t) done.add(a.task_id);
+    for (const task of r.workflow.tasks) {
+      const id = task.id;
+      if (done.has(id)) { st.set(id, "done"); continue; }
+      const mine = r.att.filter((a) => a.task_id === id && a.start <= t);
+      if (mine.some((a) => a.stop > t)) { st.set(id, "running"); continue; }
+      const lastFail = mine.some((a) => a.outcome === "failed");
+      if (lastFail) { st.set(id, t >= r.end && r.metrics.completed === false ? "dead" : "retry"); continue; }
+      st.set(id, task.preds.every((p) => done.has(p)) ? "ready" : "waiting");
+    }
+    return st;
+  }
+  function relAt(r, t) {
+    let cur = r.rel.length ? r.rel[0][1] : null;
+    for (const [tt, vals] of r.rel) { if (tt <= t) cur = vals; else break; }
+    return cur;
+  }
+  function counters(r, t) {
+    let done = 0, failed = 0, repl = 0, wasted = 0;
+    const seen = new Set();
+    for (const a of r.att) {
+      if (a.start > t) continue;
+      if (a.outcome === "success" && a.stop <= t && !seen.has(a.task_id)) { done++; seen.add(a.task_id); }
+      if (a.outcome === "failed" && a.stop <= t) failed++;
+      if (a.kind === "replica") repl++;
+      if (a.outcome === "failed" || a.outcome === "cancelled") wasted += Math.max(0, Math.min(a.stop, t) - a.start);
+    }
+    return { done, failed, repl, wasted };
+  }
+
+  // ---------------------------------------------------------------- rendering
+  const colorFor = (a, t) => (a.stop > t ? "var(--accent)" : a.outcome === "success" ? "var(--ok)"
+    : a.outcome === "failed" ? "var(--bad)" : "var(--idle)");
+
+  function ticks(maxT) {
+    const raw = maxT / 8, p = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 5, 10].map((m) => m * p).find((s) => s >= raw);
+    const out = [];
+    for (let v = 0; v <= maxT + 1e-9; v += step) out.push(v);
+    return out;
+  }
+
+  function gantt(r, t) {
+    const W = 760, L = 150, R = 10, rowH = 42, top = 8, n = r.workers.length;
+    const H = top + n * rowH + 26;
+    const x = (v) => L + (v / T_MAX) * (W - L - R);
+    const rel = relAt(r, t);
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Gantt chart for ${esc(r.label)}">
+      <defs><pattern id="dn-${r.idx}" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="6" height="6" fill="transparent"/><rect width="2.2" height="6" fill="var(--down)"/></pattern></defs>`;
+    for (const v of ticks(T_MAX)) {
+      s += `<line x1="${x(v)}" x2="${x(v)}" y1="${top}" y2="${top + n * rowH}" stroke="var(--grid)"/>`;
+      s += `<text class="tick" x="${x(v)}" y="${top + n * rowH + 16}" text-anchor="middle">${+v.toFixed(1)}</text>`;
+    }
+    r.workers.forEach((w, i) => {
+      const y = top + i * rowH;
+      const isDown = r.downs.some((d) => d.w === w.id && d.s <= t && t < d.e);
+      const busy = r.att.some((a) => a.worker === w.id && a.start <= t && t < a.stop);
+      const dot = isDown ? "var(--bad)" : busy ? "var(--accent)" : "var(--ok)";
+      const R = rel ? rel[w.id] : null;
+      s += `<circle cx="10" cy="${y + 12}" r="5" fill="${dot}"><title>${isDown ? "down" : busy ? "busy" : "idle"}</title></circle>`;
+      s += `<text x="22" y="${y + 17}" font-size="13" font-weight="600">${esc(w.label)}</text>`;
+      s += `<text class="tick" x="${L - 8}" y="${y + 17}" text-anchor="end">×${fmt(w.speed, 1)}</text>`;
+      if (R !== null && R !== undefined) {
+        s += `<rect x="22" y="${y + 25}" width="74" height="6" rx="3" fill="var(--grid)"/>`;
+        s += `<rect x="22" y="${y + 25}" width="${Math.max(0, Math.min(1, R)) * 74}" height="6" rx="3" fill="${R < 0.75 ? "var(--bad)" : R < 0.88 ? "var(--warn)" : "var(--ok)"}"/>`;
+        s += `<text class="tick" x="102" y="${y + 31}">R ${fmt(R, 2)}</text>`;
+      }
+      s += `<line x1="${L}" x2="${W - R}" y1="${y + rowH}" y2="${y + rowH}" stroke="var(--grid)"/>`;
+      for (const d of r.downs) if (d.w === w.id && d.s <= t) {
+        s += `<rect x="${x(d.s)}" y="${y + 3}" width="${Math.max(1, x(Math.min(d.e, t)) - x(d.s))}" height="${rowH - 6}" fill="url(#dn-${r.idx})" opacity="0.7"/>`;
+      }
+      for (const a of r.att) if (a.worker === w.id && a.start <= t) {
+        const x0 = x(a.start), x1 = x(Math.min(a.stop, t)), bw = Math.max(1.5, x1 - x0);
+        const dash = a.kind === "replica" ? ` stroke="var(--ink)" stroke-dasharray="3 2" stroke-width="1.2"` : "";
+        s += `<rect x="${x0}" y="${y + 6}" width="${bw}" height="${rowH - 12}" rx="3" fill="${colorFor(a, t)}"${dash}>
+          <title>${esc(a.task)} on ${esc(w.label)}: ${a.outcome || "running"}${a.category ? " (" + a.category + ")" : ""}, ${fmt(a.start)}–${fmt(a.stop)}${a.reason ? "\n" + esc(a.reason) : ""}</title></rect>`;
+        if (bw > 26) s += `<text x="${x0 + bw / 2}" y="${y + rowH / 2 + 4}" text-anchor="middle" font-size="12" fill="#fff" style="fill:#fff">${esc(a.task)}</text>`;
+      }
+    });
+    const dl = r.workflow.deadline;
+    if (dl) s += `<line x1="${x(dl)}" x2="${x(dl)}" y1="${top}" y2="${top + n * rowH}" stroke="var(--bad)" stroke-dasharray="5 4"/>`;
+    s += `<line x1="${x(t)}" x2="${x(t)}" y1="${top - 4}" y2="${top + n * rowH}" stroke="var(--ink)" stroke-width="1.5"/>`;
+    return s + "</svg>";
+  }
+
+  function dag(r, t) {
+    const st = taskStates(r, t);
+    const tasks = r.workflow.tasks, cols = r.layers.cols;
+    const many = tasks.length > 24;
+    const colW = many ? 34 : 92, rowH = many ? 22 : 40, nodeW = many ? 18 : 78, nodeH = many ? 14 : 26;
+    const maxRows = Math.max(...cols.map((c) => c.length));
+    const W = Math.max(cols.length * colW + 10, 200), H = maxRows * rowH + 10;
+    const pos = new Map();
+    cols.forEach((col, ci) => col.forEach((id, ri) => {
+      const off = (maxRows - col.length) * rowH / 2;
+      pos.set(id, [5 + ci * colW + (colW - nodeW) / 2, 5 + off + ri * rowH + (rowH - nodeH) / 2]);
+    }));
+    const fill = { done: "var(--ok)", running: "var(--accent)", retry: "var(--bad-soft)", dead: "var(--bad)", ready: "var(--warn-soft)", waiting: "var(--panel)" };
+    const stroke = { done: "var(--ok)", running: "var(--accent)", retry: "var(--bad)", dead: "var(--bad)", ready: "var(--warn)", waiting: "var(--line)" };
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Task graph state">`;
+    for (const tk of tasks) for (const p of tk.preds) {
+      const [x1, y1] = pos.get(p), [x2, y2] = pos.get(tk.id);
+      s += `<line x1="${x1 + nodeW}" y1="${y1 + nodeH / 2}" x2="${x2}" y2="${y2 + nodeH / 2}" stroke="var(--line)" stroke-width="1"/>`;
+    }
+    for (const tk of tasks) {
+      const [x0, y0] = pos.get(tk.id), state = st.get(tk.id);
+      const light = state === "done" || state === "running" || state === "dead";
+      s += `<rect x="${x0}" y="${y0}" width="${nodeW}" height="${nodeH}" rx="5" fill="${fill[state]}" stroke="${stroke[state]}" stroke-width="1.5"><title>${esc(tk.label)}: ${state}</title></rect>`;
+      if (!many) s += `<text x="${x0 + nodeW / 2}" y="${y0 + nodeH / 2 + 4}" text-anchor="middle" font-size="10.5" style="fill:${light ? "#fff" : "var(--ink)"}">${esc(tk.label.length > 11 ? tk.label.slice(0, 10) + "…" : tk.label)}</text>`;
+    }
+    return s + "</svg>";
+  }
+
+  const filters = { dec: true, fail: true, life: false };
+  const show = (k) => (k === "dec" || k === "move" ? filters.dec : k === "fail" || k === "repl" ? filters.fail : filters.life);
+
+  function feed(r, t) {
+    const items = r.log.filter((l) => l.t <= t && show(l.k));
+    const fresh = items.length ? items[items.length - 1].t : -1;
+    return items.slice(-80).reverse().map((l) =>
+      `<li class="${l.k === "life" ? "quiet" : l.k}${l.t === fresh && t - fresh < T_MAX * 0.02 ? " fresh" : ""}"><span class="t">${fmt(l.t)}</span><span class="m">${esc(l.m)}</span></li>`
+    ).join("") || `<li class="quiet"><span class="t"></span><span class="m">Nothing yet. Press Play.</span></li>`;
+  }
+
+  function statusOf(r, t) {
+    if (t < r.end) return ["running", "running"];
+    const m = r.metrics;
+    if (m.completed === false) return ["failed", "workflow failed"];
+    return m.deadline_met === false ? ["missed", `done t=${fmt(r.end)} · deadline missed`] : ["met", `done t=${fmt(r.end)} · deadline met`];
+  }
+
+  // ---------------------------------------------------------------- page structure
+  let shown = RUNS.slice(0, Math.min(RUNS.length, 2)).map((_, i) => i);
+  let time = 0;
+  RUNS.forEach((r, i) => (r.idx = i));
+
+  function buildRuns() {
+    const host = $("runs");
+    host.style.setProperty("--cols", shown.length);
+    host.innerHTML = shown.map((ri, col) => `
+      <article class="run" id="run-${col}">
+        <div class="run-head">
+          <select id="pick-${col}" aria-label="Run shown in column ${col + 1}">${RUNS.map((r, i) =>
+            `<option value="${i}"${i === ri ? " selected" : ""}>${esc(r.label)}</option>`).join("")}</select>
+          <span class="status" id="st-${col}"></span>
+        </div>
+        <div class="counters" id="cnt-${col}"></div>
+        <div class="chart" id="g-${col}"></div>
+        <div class="split">
+          <div class="box"><h3>Task graph</h3><div class="dag" id="d-${col}"></div>
+            <div class="legend"><span><i style="background:var(--warn-soft);border:1px solid var(--warn)"></i>ready</span><span><i style="background:var(--bad-soft);border:1px solid var(--bad)"></i>retry pending</span><span><i style="background:var(--ok)"></i>done</span></div></div>
+          <div class="box"><h3>Decisions and events</h3><ul class="feed" id="f-${col}"></ul></div>
+        </div>
+      </article>`).join("");
+    shown.forEach((_, col) => $(`pick-${col}`).addEventListener("change", (e) => { shown[col] = +e.target.value; rescale(); render(); }));
+  }
+
+  function render() {
+    const t = time;
+    $("clock").textContent = `t = ${fmt(t)} / ${fmt(T_MAX / 1.02)}`;
+    $("scrub").value = Math.round((t / T_MAX) * 1000);
+    shown.forEach((ri, col) => {
+      const r = RUNS[ri];
+      const [cls, txt] = statusOf(r, t);
+      const st = $(`st-${col}`); st.className = `status ${cls}`; st.textContent = txt;
+      const c = counters(r, t), n = r.workflow.tasks.length;
+      $(`cnt-${col}`).innerHTML = [
+        [`${c.done}/${n}`, "tasks done"], [c.failed, "attempts lost"], [c.repl, "replicas"],
+        [fmt(c.wasted), "wasted time"], [fmt(Math.min(t, r.end)), "elapsed"]]
+        .map(([v, l]) => `<div class="counter"><b>${v}</b><span>${l}</span></div>`).join("");
+      $(`g-${col}`).innerHTML = gantt(r, t);
+      $(`d-${col}`).innerHTML = dag(r, t);
+      $(`f-${col}`).innerHTML = feed(r, t);
+    });
+  }
+
+  function buildCompare() {
+    const rows = [
+      ["Workflow completed", (m) => (m.completed ? "yes" : "no"), null],
+      ["Makespan", (m) => (m.completed ? fmt(m.makespan) : "failed"), (m) => (m.completed ? m.makespan : Infinity)],
+      ["Deadline met", (m) => (m.deadline_met ? "yes" : "no"), null],
+      ["Attempts lost", (m) => m.n_failed_attempts, (m) => m.n_failed_attempts],
+      ["Retries", (m) => m.n_retries, (m) => m.n_retries],
+      ["Replicas queued / started", (m) => `${m.n_replicas} / ${m.replicas_started}`, null],
+      ["Wasted work", (m) => fmt(m.wasted_time), (m) => m.wasted_time],
+      ["Resource overhead", (m) => fmt(m.resource_overhead, 2), (m) => m.resource_overhead],
+      ["Mean recovery time", (m) => fmt(m.recovery_time_mean), null],
+      ["Decision time per call (ms)", (m) => fmt(m.mean_decision_ms, 2), null],
+    ];
+    let h = `<thead><tr><th>Metric</th>${RUNS.map((r) => `<th>${esc(r.label)}</th>`).join("")}</tr></thead><tbody>`;
+    for (const [name, get, score] of rows) {
+      const vals = RUNS.map((r) => (score ? score(r.metrics) : null));
+      const best = score ? Math.min(...vals) : null;
+      const unique = score && vals.filter((v) => v === best).length < vals.length;
+      h += `<tr><td>${name}</td>${RUNS.map((r, i) => `<td class="${unique && vals[i] === best ? "best" : ""}">${get(r.metrics)}</td>`).join("")}</tr>`;
+    }
+    $("cmp").innerHTML = h + "</tbody>";
+    $("cmpnote").textContent = DATA.note || "One illustrative run per scheduler on the same workflow and the same failure schedule. The statistical comparison lives in the experiment results.";
+  }
+
+  // ---------------------------------------------------------------- playback
+  let playing = false, last = 0;
+  const speed = () => +$("speed").value;
+  const baseRate = () => T_MAX / 30; // the whole replay takes about 30 s at 1×
+
+  function frame(ts) {
+    if (!playing) return;
+    const dt = last ? (ts - last) / 1000 : 0;
+    last = ts;
+    time = Math.min(T_MAX, time + dt * baseRate() * speed());
+    render();
+    if (time >= T_MAX) setPlaying(false); else requestAnimationFrame(frame);
+  }
+  function setPlaying(p) {
+    playing = p;
+    $("play").textContent = p ? "⏸ Pause" : "▶ Play";
+    if (p) { if (time >= T_MAX) time = 0; last = 0; requestAnimationFrame(frame); }
+  }
+  const jump = (v) => { time = Math.max(0, Math.min(T_MAX, v)); render(); };
+  $("play").addEventListener("click", () => setPlaying(!playing));
+  $("restart").addEventListener("click", () => { setPlaying(false); jump(0); });
+  $("next").addEventListener("click", () => { setPlaying(false); jump(EVENTS.find((e) => e > time + 1e-9) ?? T_MAX); });
+  $("prev").addEventListener("click", () => { setPlaying(false); jump([...EVENTS].reverse().find((e) => e < time - 1e-9) ?? 0); });
+  $("scrub").addEventListener("input", (e) => { setPlaying(false); jump((e.target.value / 1000) * T_MAX); });
+  for (const [id, key] of [["f-dec", "dec"], ["f-fail", "fail"], ["f-life", "life"]]) {
+    $(id).addEventListener("click", (e) => { filters[key] = !filters[key]; e.currentTarget.setAttribute("aria-pressed", filters[key]); render(); });
+  }
+  $("theme").addEventListener("click", () => {
+    const root = document.documentElement;
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
+    if (e.key === " ") { e.preventDefault(); setPlaying(!playing); }
+    else if (e.key === "ArrowRight") $("next").click();
+    else if (e.key === "ArrowLeft") $("prev").click();
+    else if (e.key === "Home") $("restart").click();
+    else if (e.key === "End") { setPlaying(false); jump(T_MAX); }
+  });
+
+  $("title").textContent = DATA.title || `Schedule replay: ${RUNS[0].workflow.name}`;
+  $("subtitle").textContent = DATA.subtitle || [RUNS[0].workflow.name + ` · ${RUNS[0].workflow.tasks.length} tasks · ${RUNS[0].workers.length} workers`, RUNS[0].scenario].filter(Boolean).join(" · ");
+  document.title = DATA.title || "Schedule Replay";
+  rescale();
+  buildRuns();
+  buildCompare();
+  render();
+})();
+</script>
+</body>
+</html>

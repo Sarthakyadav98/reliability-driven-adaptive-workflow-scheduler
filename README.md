@@ -19,7 +19,7 @@ Docker containers) that execute real tasks and fail for real.
 python -m venv .venv
 # Windows: .venv\Scripts\activate     Linux/macOS: source .venv/bin/activate
 pip install -e ".[dev]"
-pytest -q                      # 74 tests (engine invariants, FT policies, QUBO vs exact, HTTP agents)
+pytest -q                      # 76 tests (engine invariants, FT policies, QUBO vs exact, HTTP agents, viewer)
 ```
 
 If you skip activation, call the venv's Python directly: `.venv\Scripts\python.exe ...`.
@@ -71,6 +71,23 @@ Worker API: `GET /health`, `GET /capabilities`, `POST /execute`,
 `POST /cancel/<attempt>`, `GET /tasks/<attempt>`, and (opt-in) `POST /admin/fail`.
 Task types are a strict allowlist: `sleep`, `cpu_benchmark`, `hash_payload`,
 `fail_once`, `slow_task`. Payloads are data, never code.
+
+## Replay viewer (for demos)
+
+Every run can be replayed in a self-contained HTML page: no server, no
+internet, any browser. It shows two runs side by side on one synced timeline:
+a Gantt chart with crashes and replicas, worker health and reliability, the task
+graph's state, the scheduler's decisions with reasons, and the final comparison.
+
+```bash
+python scripts/record_demo.py                        # simulated scenario -> results/viewer/simulation.html
+python scripts/record_demo.py --live results/docker  # also replay a Docker run -> results/viewer/live.html
+python -m rdas.viewer A/run.json B/run.json -o my.html   # any runs (rdas.live writes run.json)
+```
+
+Pre-recorded copies are in `docs/demo/` (`replay_simulation.html`,
+`replay_docker.html`). They are the fallback if Docker misbehaves on the day.
+Keys: **Space** play/pause, **← / →** previous/next event, **Home / End**.
 
 ## Workflows as JSON
 
