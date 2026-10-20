@@ -1,153 +1,194 @@
 # Design Specification: what the code actually implements
 
-This is the single-page technical spec agreed for Review 2. It describes the
-implemented system, so the report's Methodology and Implementation chapters
-should be written from it. If the code changes, update this file in the same commit.
+The technical spec for Review 2. It describes the implemented system, so the
+report's Methodology and Implementation chapters should be written from it. If
+the code changes, update this file in the same commit. Requirement-by-requirement
+status against the team architecture spec: `docs/AUDIT.md`.
 
 ---
 
 ## 1. Architecture → code map
 
-| Architecture component (Review 1 diagram) | Module | Notes |
-|---|---|---|
-| Workflow Generator | `rdas/workflow.py` | Random layered DAGs, fork-join, fixed 12-task demo DAG |
-| Worker Pool | `rdas/workers.py`, `rdas/models.py::WorkerSpec` | Heterogeneous speed, hidden per-worker crash-rate factor |
-| Fault Injector | `rdas/faults.py` | Poisson crashes, exponential repair, slowdowns, degradation, scripted crashes |
-| Fault & Resource Monitor | `rdas/engine.py` (event handlers) | Feeds uptime, crash, recovery and attempt outcomes to the estimator |
-| Reliability & Performance Estimator | `rdas/reliability.py` | Gamma-Poisson (Bayesian, forgetting, fleet-pooled prior); EMA as ablation |
-| Adaptive Scheduling Controller | `rdas/schedulers/adaptive.py` | Placement + reassignment + replication policy |
-| Pluggable Optimization Backend | `rdas/qubo.py` | `greedy` (classical), `qubo` (QUBO + SA), `exact` (brute force), same objective |
-| Baselines | `rdas/schedulers/simple.py`, `heft.py` | Round Robin, Least-Loaded, HEFT, EFT-retry, replicate-2 |
-| Evaluation Harness | `rdas/experiments.py`, `rdas/viz.py` | Same workflows, pools, fault traces and seeds for every scheduler |
+```
+Workflow (JSON / generator) ─► Engine (logical task state, event loop, monitor) ◄─── events ───┐
+                                 │  ready tasks + state                                        │
+                                 ▼                                                             │
+              Reliability estimator ─► Scheduler = Fault-tolerance policy ─► Placement         │
+                                         (how many copies, why)      (which workers)           │
+                                 │  Decision (assignments, revocations)                        │
+                                 ▼                                                             │
+                     ExecutionBackend: Simulation (virtual time)  |  HTTP agents (processes / Docker)
+```
 
-**Core rule:** a scheduler only *returns decisions* (`Decision`: assignments and
-revocations). The single shared engine executes them, and one metrics path
-scores every scheduler.
+| Component | Module | Notes |
+|---|---|---|
+| Workflow generator / loader | `workflow.py` | layered DAGs, fork-join, demo DAG, **validated JSON loader** |
+| Worker pool | `pool.py`, `models.WorkerSpec` | heterogeneous speed, hidden failure factor (simulation) |
+| Engine + monitor | `engine.py` | logical task states, attempts, bounded retries, metrics, `SimView` for schedulers |
+| Execution backends | `backends/simulation.py`, `backends/http.py` | same normalized events: `succeeded`, `failed` (+ category), `worker_unavailable`, `worker_available` |
+| Fault injector (simulation) | `faults.py` | Poisson crashes, repair, slowdowns, degradation, scripted crashes |
+| Worker agent (real execution) | `workers/agent.py`, `workers/task_registry.py` | stdlib HTTP server; allowlisted task types |
+| Reliability estimator | `reliability.py` | Gamma-Poisson (default), Beta-Bernoulli, EMA |
+| Cost model | `schedulers/cost.py` | one reliability-aware model shared by placement, QUBO, FT policy and reassignment |
+| Fault-tolerance engine | `fault_tolerance.py` | `RetryOnly`, `StaticReplication`, `ThresholdFT`, `ExpectedCostFT` → `FTDecision` |
+| Placement backends | `schedulers/placement.py` | round robin, least-loaded, EFT, `CostPlacement` (greedy = Reliability-Aware HEFT, QUBO + SA, exact) |
+| Composed scheduler | `schedulers/policy.py` | FT policy + placement (+ reassignment); `adaptive.py` configures the core contribution |
+| Static HEFT | `schedulers/heft.py` | canonical HEFT plan (only scheduler with its own planner) |
+| QUBO | `qubo.py` | decision-scoped assignment with replica counts k_i |
+| Experiments / live runs | `experiments.py`, `live.py`, `scripts/` | simulation sweeps; real-execution runs |
+
+**Core rules.** A scheduler only *returns decisions*; one engine executes them
+on either backend; one metrics path scores everything. The fault-tolerance
+policy decides *how much protection*, the placement decides *where*, and any
+policy can be paired with any placement.
 
 ## 2. Models
 
-- **Task** `T_i`: `work_i` compute units, predecessor/successor lists. Duration on worker j: `work_i / speed_j`. Communication cost is zero; HEFT's own paper flags this simplification too.
-- **Workflow**: a DAG with ids `0..n-1`. Deadline = `1.5 x` the fault-free HEFT plan makespan (configurable).
-- **Worker** `W_j`: nominal `speed_j`, which all schedulers know, and a hidden `failure_factor_j`, which only the fault injector knows. Pools are generated so that fast workers tend to be flaky (`fast_is_flaky=0.7`). That creates the speed vs reliability trade-off speed-only schedulers miss.
+- **Task**: `work` units, predecessors and successors; for real execution also `name`, `type` (allowlisted) and `payload`. Duration on worker j is `work / speed_j`. Communication cost is zero.
+- **Workflow**: a DAG; deadline = 1.5 × the fault-free HEFT plan makespan in sweeps, or given in the JSON.
+- **Worker**: nominal `speed` (known to schedulers; read from `/capabilities` in real execution) and a hidden `failure_factor` (simulation only). Single slot plus a priority queue.
+- **Attempt**: one copy of a logical task on a worker, with a unique id, outcome, failure category, expected vs actual duration, the reliability estimate used at placement, and the FT reason.
 
-## 3. Execution semantics (engine)
+## 3. Execution semantics
 
-- Discrete-event simulation (own heap-based engine; SimPy was not needed and would complicate preempting a running attempt on a crash).
-- Each worker runs one attempt at a time and has a priority queue of assigned attempts. An idle, up worker immediately starts its best-priority queued attempt.
-- A task becomes **READY** when all its predecessors are done and it has no live copy. `decide()` runs after every event time.
-- Assigning a task that already has a live copy creates a **replica**. The first copy to succeed wins and the others are cancelled (running copies are killed and their time counts as wasted).
-- A **crash** kills the running attempt; its task returns to READY (retry) unless another copy is alive. Queued attempts wait for recovery unless the scheduler **revokes** them (reassignment).
+- Logical task states: WAITING → READY → ASSIGNED → DONE | FAILED. READY means all parents succeeded and no live copy exists. `decide()` runs after every batch of events.
+- Assigning a task that already has a live copy creates a **replica**. The first success wins and the other copies are cancelled (running ones are killed, and `/cancel` is sent to real workers).
+- `worker_unavailable` kills the running attempt (`worker_unavailable` category). Queued attempts wait unless the scheduler revokes them (**reassignment**). `failed` events carry a category: `injected`, `timeout`, `dispatch_error` or `task_error`.
+- When every copy of a task has failed, the task is retried, at most `max_retries` times (default 5). After that the task FAILS and the workflow stops (workflow success = false).
+- **Idempotent events:** events for attempts that are unknown, finished or cancelled are ignored.
+- **Failure taxonomy → reliability:** only worker-related categories (`worker_unavailable`, `injected`, `timeout`, `dispatch_error`) update the estimator. `task_error` (the task's own bug) is retried without blaming the worker.
 
-## 4. Fault model
+### Simulation backend
+Seed-deterministic `FaultTrace`: per-worker Poisson crash process with rate
+`lambda_j = lambda_bar · failure_factor_j`, `lambda_bar = −ln(1−p) / ref_duration`,
+and exponential repair (mean = 1 mean task duration). Optional slowdowns,
+degradation and scripted crashes. Faults never depend on scheduling decisions
+(common random numbers), so every scheduler on a seed sees the same faults.
 
-- Crashes: Poisson process per worker with rate `lambda_j = lambda_bar * failure_factor_j`, where `lambda_bar = -ln(1 - p) / ref_duration`. So `p` is the probability that an average task on an average worker is hit by a crash. Sweep `p` in {0, 0.05, 0.1, 0.2, 0.3} (the 5–30% range from the proposal).
-- Repair: exponential with mean `MTTR = 1 x` mean task duration (default).
-- Optional: slowdown episodes (2–4x slower), degradation (a worker's rate x8 from a random time), scripted crashes (demo, tests).
-- **Common random numbers:** traces depend only on `(workers, config, seed)`, never on scheduling, so every scheduler on a seed faces identical faults.
+### HTTP backend (real execution)
+- Engine time = wall seconds / `seconds_per_unit`.
+- One dispatcher thread per running attempt (`POST /execute`, synchronous, with a per-attempt timeout of 4× the expected duration, at least 2 s).
+- A health thread polls `/health` every 0.25 s. 503, a refused connection or a reset connection → `worker_unavailable`; healthy again → `worker_available`.
+- Agents emulate speed by running each task for `work · spu / speed` seconds of real work (sleep, CPU hashing, data hashing).
+- Configured failures are seeded per (worker, task, attempt number); `fail_once` fails deterministically on a chosen attempt. `/admin/fail` simulates a crash; `docker compose stop` is a real one.
 
-## 5. Reliability & performance estimator
+## 4. Reliability & performance estimator
 
-Gamma-Poisson posterior on each worker's crash rate, with exponential forgetting:
-
-```
-lambda_hat_j = (a0 + n_j) / (b0 + E_j)        n_j = discounted crashes, E_j = discounted up-time
-P(success of a task of duration d on j) = exp(-lambda_hat_j * d)
-R_j (display) = P(success) for an average-length task
-```
-
-- Prior: `b0 = 8 x ref_duration` of pseudo-exposure. The prior mean is the **fleet-pooled** rate (empirical Bayes), shrunk toward an operator prior of 10% task failure. The scheduler is never told the true `p`.
-- Forgetting half-life `25 x ref_duration`, so a worker that degrades or recovers is tracked.
-- Performance: EMA of actual / expected duration (catches slowdowns).
-- Ablation estimator: `EMAEstimator`, `R <- 0.2*outcome + 0.8*R` (the Review 1 example: 0.9 → 0.72 → 0.776).
-
-Why Gamma-Poisson over plain EMA: it is the conjugate Bayesian model for the
-exponential failure model `R(t) = e^{-lambda t}` used in reliability-aware
-scheduling. It accounts for task length (long tasks are riskier), carries
-uncertainty for workers with little history, and forgets old evidence.
-
-## 6. Adaptive scheduler (core contribution)
-
-At each decision:
-
-1. **Reassignment**: for every queued (not running) single-copy task, compare its expected completion on its current worker with the best alternative. Move it if the worker is down and the alternative is better, or if the alternative is better by more than `0.3 x` the task duration (hysteresis against thrashing).
-2. **Placement**: ready tasks in HEFT upward-rank order, in batches of up to 6, are placed by the optimization backend on the cost model below.
-3. **Replication (fault-handling policy)**: per task, compare *single copy + retry* against *add a replica on the best other up worker*, and replicate only if the gain is positive.
-
-Cost model (task i, worker j):
+Default: Gamma-Poisson posterior on each worker's failure rate with exponential forgetting:
 
 ```
-d_ij = work_i / speed_j * perf_j
-p_ij = exp(-lambda_hat_j * d_ij)
-E_ij = avail_j + d_ij + beta * (1 - p_ij) * (d_ij/2 + r_i)        r_i = mean duration (retry)
-w_i  = criticality_i ^ gamma     criticality = (rank_u + rank_d) / critical-path length
+lambda_hat_j = (a0 + n_j) / (b0 + E_j)      n_j = discounted failures, E_j = discounted up-time
+P(success, duration d) = exp(-lambda_hat_j · d)
 ```
 
-Replication rule:
+- `b0 = 8 × ref_duration` of pseudo-exposure. The prior mean is the fleet-pooled rate (empirical Bayes), shrunk toward an operator prior of 10% task failure. Half-life is 25 × ref_duration.
+- Performance: EMA of actual / expected duration per worker.
+- Alternatives: `BetaBernoulliEstimator` (`R = (a+s)/(a+b+s+f)`, a=8, b=2; the team baseline) and `EMAEstimator`. `scripts/sensitivity.py` compares them and their priors (RESULTS §5).
+- The estimate in force at each placement is stored on the attempt (`est_p_success`).
+
+## 5. Shared cost model (`schedulers/cost.py`)
 
 ```
-time(single)    = f_a + beta (1 - p_a)(d_a/2 + r)
-time(replicate) = p1 f1 + (1-p1) p2 f2 + (1-p1)(1-p2)(f2 + beta r)      (copies ordered by finish)
-gain = w_i * (time saved) - rho * (extra busy time)
-rho  = base_resource_weight + resource_weight * (waiting + imminent tasks per worker)
+d_ij = work_i / speed_j · perf_j
+p_ij = P(success of i on j)
+E_ij = avail_j + d_ij + beta (1 − p_ij)(d_ij / 2 + r_i)     r_i = mean duration (retry cost)
+w_i  = criticality_i ^ gamma                                criticality = (rank_u + rank_d) / CP length
+slack_i = deadline − now − rank_u(i)
 ```
 
-`rho` is the opportunity cost of busy time. It is high under backlog and near
-zero on idle capacity, for example at the tail of a workflow, where speculative
-backups are cheap. Replicas only go to up workers and must be able to start
-before the primary is expected to finish (otherwise they are just a pre-booked retry).
+## 6. Fault-tolerance policies (`fault_tolerance.py`)
 
-Parameters (`risk_weight beta=1`, `resource_weight=2`, `base_resource_weight=0.05`,
-`gamma=2`) were chosen by `scripts/tune.py` on **dev seeds 0–9**. All reported
-results use **held-out seeds 100+**.
+Each returns `FTDecision(task, action ∈ {execute, retry, replicate}, replicas, reason, avoid)`.
 
-## 7. Decision-scoped QUBO
+| Policy | Rule |
+|---|---|
+| `RetryOnly` | 1 copy; after a failure, retry (placement re-chooses the worker) |
+| `StaticReplication(k)` | always k copies, plus retry |
+| `ThresholdFT` (team rule) | replicate (2) if criticality ≥ 0.68 and (mean R < 0.82 or slack ≤ 1 mean duration). A retry avoids the failed worker(s) |
+| `ExpectedCostFT` (ours) | replicate iff `w_i · (time saved) > rho · (extra busy time)`, see below. A retry avoids the failed worker(s) |
 
-Variables `x_ij` = task i (current batch) on worker j.
+Expected-cost rule, with the two best candidates by `E_ij` (a = primary) and
+copies ordered by expected finish f1 ≤ f2:
 
 ```
-H = sum_ij c_ij x_ij + sum_{i<k} sum_j q_ikj x_ij x_kj + A sum_i (sum_j x_ij - 1)^2
-c_ij  = w_i * E_ij / ref                 (same cost model as the classical backend)
-q_ikj = w_k * d_ij / ref                 (k waits for i if both go to j)
-A     = 1.5 x (largest possible saving from breaking one-hot) + 1
+time(single)    = f_a + beta (1 − p_a)(d_a/2 + r)
+time(replicate) = p1 f1 + (1−p1) p2 f2 + (1−p1)(1−p2)(f2 + beta r)
+rho = base_resource_weight + resource_weight · (waiting + imminent tasks per worker)
 ```
 
-- Solved with `dwave.samplers.SimulatedAnnealingSampler`. Any `dimod` sampler, including D-Wave Leap hardware for V4, can be passed in.
-- Validated: BQM energy equals the objective on every feasible assignment; the `dimod.ExactSolver` ground state is one-hot and equals the brute-force optimum; SA hits the optimum on small instances (`tests/test_qubo.py`).
-- Size is bounded by the batch (≤6 tasks) and by at most 8 workers, so ≤48 variables. This is the decision-scoped design, in contrast to whole-workflow QUBOs that hit the ~7-activity hardware wall (Pérez Armas et al., 2024).
-- Capacity constraint: not needed in this model (single-slot workers with queues). Queueing interaction is captured by `q` instead.
+A replica only goes to an up worker that can start it before the primary is
+expected to finish. FT decisions inside a batch see a provisional load map, so
+later tasks see earlier primaries. `max_replicas` = 2; retries are bounded by the engine.
 
-## 8. Baselines
+## 7. Placement backends (`schedulers/placement.py`)
 
-| Name | What it does | Weakness it isolates |
-|---|---|---|
-| `round-robin` | Cycle through up workers | Ignores load, speed, reliability |
-| `least-loaded` | Up worker with least backlog | Ignores speed, reliability |
-| `heft` | Static HEFT plan (rank_u + insertion EFT); failed task resubmitted to the same planned worker | Assumes fixed, reliable workers |
-| `eft-retry` | Online HEFT-style list scheduling, retry anywhere | Reliability-blind; same machinery as adaptive, so this is the cleanest ablation |
-| `replicate-2` | Every task on its 2 earliest-finish workers, plus retry | Uniform static fault tolerance |
+All place k distinct copies per task, honour `avoid` when enough other workers
+exist, and update the shared load map across batches.
 
-## 9. Metrics
+- `RoundRobinPlacement`, `LeastLoadedPlacement`, `EFTPlacement`: reliability-blind.
+- `CostPlacement("greedy")`: **Reliability-Aware HEFT**. Rank order; each copy goes to the cheapest column of the batch objective below.
+- `CostPlacement("qubo")`: the same objective as a QUBO, solved by `dwave-samplers` simulated annealing.
+- `CostPlacement("exact")`: brute force (validation).
+
+## 8. Decision-scoped QUBO (`qubo.py`)
+
+```
+H = Σ_ij c_ij x_ij + Σ_{i<k} Σ_j q_ikj x_ij x_kj + A Σ_i (Σ_j x_ij − k_i)²
+c_ij  = w_i E_ij / ref        (+ a large constant on avoided workers)
+q_ikj = w_k d_ij / ref        (k waits for i if both are on j; sharing is charged, not forbidden)
+A     = penalty_scale × (1.5 × largest possible saving from dropping a copy + 1)
+```
+
+- Copies of a task are on distinct workers by construction (one variable per task-worker pair).
+- Decoded samples are checked: a task with ≠ k_i copies is **infeasible**, counted (`qubo_feasibility_rate`), then repaired with its cheapest columns.
+- Build, anneal and decode times are measured separately.
+- Validated: BQM energy equals the objective on every feasible assignment (including k=2), the `dimod.ExactSolver` ground state is feasible and equals brute force, and SA hits the optimum on small instances.
+- Size ≤ 6 tasks × 8 workers = 48 variables, in contrast to whole-workflow QUBOs that hit the ~7-activity hardware wall (Pérez Armas et al., 2024).
+
+## 9. Scheduler registry
+
+| name | placement | fault tolerance | reassign |
+|---|---|---|---|
+| `round-robin` | round robin | retry | - |
+| `least-loaded` | least backlog | retry | - |
+| `heft` | static HEFT plan | resubmit to planned worker | - |
+| `eft-retry` | online EFT | retry | - |
+| `replicate-2` | online EFT | always 2 copies | - |
+| `eft-threshold` | online EFT | threshold rule | - |
+| `reliability-heft` | reliability-aware | retry | - |
+| `adaptive` | reliability-aware | expected-cost | yes |
+| `adaptive-qubo` | QUBO + SA | expected-cost | yes |
+| `adaptive-threshold` | reliability-aware | threshold rule | yes |
+| `adaptive-no-replication` | reliability-aware | retry (+ avoid) | yes |
+| `adaptive-no-reassign` | reliability-aware | expected-cost | - |
+
+`reliability-heft` vs `eft-retry` is the *reliability term on/off* ablation;
+the `adaptive-*` variants ablate the fault-tolerance parts. Parameters
+(`beta=1`, `resource_weight=2`, `base_resource_weight=0.05`, `gamma=2`) come
+from `scripts/tune.py` on **dev seeds 0–9**. Results use **held-out seeds 100+**.
+
+## 10. Metrics
 
 | Metric | Definition |
 |---|---|
-| Makespan | time the last task finishes |
-| Deadline met | makespan ≤ workflow deadline |
+| Makespan | last task finish; undefined (NaN) if the workflow failed |
+| Workflow success | all tasks succeeded within the retry limit |
+| Task success rate | succeeded tasks / tasks |
+| Deadline met | completed and makespan ≤ workflow deadline |
 | Recovery overhead | makespan − fault-free makespan of the same scheduler on the same workflow |
+| Recovery time | per task: first loss → successful completion (mean over affected tasks) |
 | Resource overhead | wasted busy time (failed + cancelled attempts) / useful busy time |
-| Failed attempts, replicas, reassignments | counts |
-| Decision latency | wall-clock time inside `decide()` per decision |
-| QUBO solve time, gap to greedy | per solver call (QUBO variant) |
+| Utilization | busy time / (workers × run length) |
+| Retries / failed attempts / failures by category | counts |
+| Replicas requested / queued / started / shortfall | from FT decisions vs what actually ran |
+| Decision latency | wall-clock time in `decide()` |
+| QUBO | feasibility rate, variables, build / anneal ms, gap to greedy |
 
-## 10. Deliberate deviations from the original plan
+## 11. Deviations and limitations
 
-- **Docker testbed (V3) is deferred to after Review 2**, following the post-Review 1 advice to get the simulator right first. The engine's decision/execution split is the seam where a Docker backend plugs in.
-- **Checkpointing** is not implemented (retry, replication and reassignment only).
-- **"Stability-Aware Scheduling"** from the teammate's diagram is not implemented: no precise algorithm was found in the literature yet.
-- **Static FT baseline** = uniform 2-replication. Revisit once the literature matrix identifies the most common conventional policy.
-
-## 11. Known limitations (state these in the report)
-
-- Zero communication cost; single-slot workers; synthetic DAGs (WfCommons traces not yet loaded).
-- Gains appear mainly at higher failure rates (≥ 0.2). At low rates the adaptive scheduler is roughly level with EFT-retry. With little history (cold start, small workflows) it behaves much like EFT.
-- When a fast worker is flaky but its crashes rarely hit tasks, caution can cost time (see the demo scenario note in the README).
-- QUBO + SA quality degrades with size relative to the exact optimum. Penalty-weight tuning is open work.
+- **Default estimator** is Gamma-Poisson, not the team's Beta-Bernoulli (duration-aware). Both are available; the sensitivity study shows similar performance.
+- **QUBO cost** is the shared expected-completion model rather than the `alpha·ET + beta·risk + gamma·lateness` sum; it uses the same signals in one consistent model.
+- Single-slot workers; no per-task-type runtime model; task outputs are not forwarded to successors; no global replication budget; no workflow-level reliability target; no checkpointing.
+- Synthetic DAGs (WfCommons traces not loaded); zero communication cost; workflow-level deadlines only.
+- Real-execution results are demonstration runs; containers on one host are not independent failure domains.
+- "Stability-Aware Scheduling" (Review 1 diagram) is not implemented: no precise algorithm was found in the literature.

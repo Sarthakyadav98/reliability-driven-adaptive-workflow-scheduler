@@ -1,46 +1,53 @@
-# Review 2: remaining work and ownership
+# Review 2: remaining work and ownership (updated 2026-10-20)
 
-The working prototype is in place: simulator, 5 baselines, adaptive scheduler,
-QUBO backend, experiment harness and demo. What's left before the review is
-**understanding, verification and write-up**, plus a few targeted extensions.
-Each person owns an area, but **everyone must be able to explain the whole demo**.
+**Built:** simulator and real-execution engine (Docker / local agents), 12
+scheduler variants including Anirudh's threshold policy and Reliability-Aware
+HEFT, three estimators, the k-replica QUBO with feasibility reporting, held-out
+evaluation with paired statistics, a sensitivity study and a penalty sweep. See
+`docs/AUDIT.md` for status against the team spec.
 
-## Everyone (first 1–2 days)
+What's left before the review is **understanding, a few targeted
+extensions and the write-up**. Each person owns an area, but **everyone must
+be able to explain the whole demo**.
 
-- [ ] Set up the repo (`pip install -e ".[dev]"`, `pytest -q`) and run `python scripts/demo.py`.
-- [ ] Read `docs/DESIGN.md` end to end. Each person explains one section to the others.
-- [ ] Agree on the final numbers to present (from `results/review2/`, held-out seeds only).
+## Everyone (first day)
 
-## Sarthak: simulator + integration + demo owner
+- [ ] `pip install -e ".[dev]"`, `pytest -q` (74 tests), then `python scripts/demo.py`.
+- [ ] Run the real-execution demo once: `python scripts/local_cluster.py` + `python -m rdas.live --compare eft-retry,adaptive --chaos 1@8:10`.
+- [ ] Read `docs/DESIGN.md` and `docs/RESULTS.md`. Each person explains one section to the others.
+- [ ] Agree on the headline claims. Use only the held-out numbers in `RESULTS.md`, including the negative ones (degrading workers: replicate-2 completes more workflows; the reliability term alone has no effect).
 
-- [ ] Rehearse the demo (`scripts/demo.py`) until it runs in under 6 minutes with narration.
-- [ ] Load 1–2 real WfCommons/Pegasus workflow shapes (Montage, Epigenomics) into `rdas/workflow.py` and rerun the sweep on them. This answers the "only synthetic DAGs?" question.
-- [ ] Report chapters: System Architecture, Implementation.
+## Sarthak: integration, demo, report lead
 
-## Anirudh: fault model + baselines + Docker groundwork
+- [ ] Rehearse the demo: simulation story (`scripts/demo.py`) + live Docker run, about 7 minutes total.
+- [ ] Load 1–2 real workflow shapes (WfCommons Montage / Epigenomics) as JSON and rerun the sweep.
+- [ ] Report chapters: Architecture, Implementation, Results.
 
-- [ ] Verify the HEFT implementation against the paper's Fig. 2 pseudocode (`schedulers/heft.py`), and add the paper's 10-task example as a test (needs communication costs set to zero, or add comm costs).
-- [ ] From the literature matrix, confirm the most common static fault-tolerance policy. If it is not uniform 2-replication, add it as a baseline.
-- [ ] Start the Docker execution backend spike: one container per worker, a task = CPU-bound sleep/compute, kill via `docker kill`. Target: the same `Decision` interface drives containers (post-Review 2 V3).
-- [ ] Report chapters: Fault model, Experimental setup.
+## Anirudh: real execution + fault tolerance (his spec)
+
+- [ ] Review `docs/AUDIT.md` against your README and flag anything misread.
+- [ ] Repeated Docker runs: 5–10 per scheduler with the same chaos schedule. Record host specs and container limits, and add the table to RESULTS §6 (open item 1).
+- [ ] Forward task outputs to successors in the live backend (data dependencies, open item 2).
+- [ ] Report chapters: Fault model, Fault-tolerance policies, Docker testbed.
 
 ## Sreyas + Sahithi: QUBO track
 
-- [ ] Penalty-weight study: SA quality drops as size grows (see `results/qubo/`). Try a smaller `A` (just above the bound), more sweeps, and the `dwave-samplers` beta schedule options. Report the gap/time curves.
-- [ ] Measure the QUBO variable/qubit count per decision across a sweep (already logged as `mean_solver_vars`) and compare with the whole-workflow formulation size in Pérez Armas et al. (2024). This is the decision-scoped novelty argument, with numbers.
-- [ ] Optional: try `dwave-samplers` `TabuSampler` / `SteepestDescentSolver` as extra classical baselines for the same QUBO.
+- [ ] Tune `penalty_scale` on **dev seeds 0–9** (held-out results suggest 0.5× beats 1×, but they cannot be used for tuning). Then rerun `adaptive-qubo` on the held-out seeds.
+- [ ] Extend the penalty sweep to larger instances, with SA schedule options (beta range, sweeps).
+- [ ] Compare decision-scoped QUBO size (`mean_solver_vars` ≈ 17) with the whole-workflow formulation size in Pérez Armas et al. (2024): the decision-scoped novelty argument, with numbers.
 - [ ] Report chapters: QUBO formulation, RQ2 results.
 
-## Literature (all, split by topic)
+## Literature (all)
 
-- [ ] Read the 4 recent papers flagged after Review 1 (Ren & Yao TSC 2026; RWSUT JKSU-CIS 2026; CCPE 2026 adaptive FT; EPJ QT 2026 quantum scheduling survey). Verify each exists before citing.
-- [ ] Add rows to the literature matrix. Check whether any of them already does online reliability estimation + adaptive choice of retry/replicate/reassign, and adjust the novelty claim if needed.
+- [ ] Verify IEEE arnumber 11264338 and the 2026 papers before citing (metadata still unconfirmed).
+- [ ] Literature matrix rows for RWSUT, the energy/reliability paper and the QUBO HPC-mapping paper. Does any of them already combine online reliability estimation with adaptive retry / replicate / reassign? Adjust the novelty claim if so.
 
-## Report skeleton (owner: whoever finishes their part first)
+## Report skeleton
 
 Abstract · Introduction · Problem & objectives · Literature review (verified) ·
-Architecture · Methodology (`DESIGN.md` §2–7) · Implementation · Experimental
-setup (§4, §9) · Preliminary results (`RESULTS.md`) · Limitations & next steps
-(`DESIGN.md` §10–11) · References (IEEE).
+Architecture (DESIGN §1–3) · Methodology (DESIGN §4–8) · Implementation
+(simulation + real execution) · Experimental setup (RESULTS header, DESIGN §10) ·
+Results (RESULTS §1–6) · Limitations & next steps (DESIGN §11, AUDIT §12) ·
+References (IEEE).
 
 Clearly separate **implemented / tested / planned**.
