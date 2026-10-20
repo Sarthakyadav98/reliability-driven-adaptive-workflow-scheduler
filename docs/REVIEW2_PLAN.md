@@ -12,7 +12,7 @@ be able to explain the whole demo**.
 
 ## Everyone (first day)
 
-- [ ] `pip install -e ".[dev]"`, `pytest -q` (74 tests), then `python scripts/demo.py`.
+- [ ] `pip install -e ".[dev]"`, `pytest -q` (76 tests), then `python scripts/demo.py`.
 - [ ] Run the real-execution demo once: `python scripts/local_cluster.py` + `python -m rdas.live --compare eft-retry,adaptive --chaos 1@8:10`.
 - [ ] Read `docs/DESIGN.md` and `docs/RESULTS.md`. Each person explains one section to the others.
 - [ ] Agree on the headline claims. Use only the held-out numbers in `RESULTS.md`, including the negative ones (degrading workers: replicate-2 completes more workflows; the reliability term alone has no effect).

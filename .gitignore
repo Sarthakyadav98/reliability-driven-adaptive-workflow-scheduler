@@ -8,3 +8,6 @@ dist/
 
 # Generated experiment output. Regenerate with the scripts; commit selected figures under docs/ instead.
 results/
+
+# Browser-automation logs (local tooling)
+.playwright-cli/

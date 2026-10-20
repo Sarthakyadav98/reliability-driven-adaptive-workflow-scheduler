@@ -1,0 +1,83 @@
+{
+  "scheduler": "eft-retry",
+  "workflow": "demo-pipeline",
+  "n_tasks": 10,
+  "n_workers": 3,
+  "completed": true,
+  "makespan": 43.69491820667463,
+  "deadline": 70.0,
+  "deadline_met": true,
+  "n_attempts": 14,
+  "n_failed_attempts": 4,
+  "n_replicas": 0,
+  "n_cancelled": 0,
+  "n_revoked": 0,
+  "n_crashes": 1,
+  "busy_time": 70.71927296668338,
+  "useful_time": 60.10179898667652,
+  "wasted_time": 10.61747398000686,
+  "decision_time_total": 0.0013718629979848629,
+  "n_decisions": 11,
+  "end_time": 43.69491820667463,
+  "tasks_succeeded": 10,
+  "n_retries": 4,
+  "replicas_started": 0,
+  "recovery_time_mean": 7.579824640003303,
+  "resource_overhead": 0.176658172617438,
+  "mean_decision_ms": 0.1247148179986239,
+  "task_success_rate": 1.0,
+  "utilization": 0.5394927363725684,
+  "fail_worker_unavailable": 1,
+  "fail_injected": 3,
+  "fail_timeout": 0,
+  "fail_dispatch_error": 0,
+  "fail_task_error": 0,
+  "n_task_retries": 4,
+  "ft_execute": 10,
+  "ft_retry": 4,
+  "ft_replicate": 0,
+  "replicas_requested": 0,
+  "replica_shortfall": 0,
+  "n_reassign_decisions": 0,
+  "wall_seconds": 6.56,
+  "workers": [
+    {
+      "index": 0,
+      "label": "worker-1",
+      "speed": 1.0
+    },
+    {
+      "index": 1,
+      "label": "worker-2",
+      "speed": 1.5
+    },
+    {
+      "index": 2,
+      "label": "worker-3",
+      "speed": 0.8
+    }
+  ],
+  "final_reliability": [
+    {
+      "worker": 0,
+      "R": 0.904788840233466,
+      "perf": 1.004705203870074,
+      "crashes": 0,
+      "rate": 0.015950587976426536
+    },
+    {
+      "worker": 1,
+      "R": 0.7175151073949233,
+      "perf": 1.0093941821024122,
+      "crashes": 3,
+      "rate": 0.052921362835374075
+    },
+    {
+      "worker": 2,
+      "R": 0.850762461405814,
+      "perf": 1.0041212606935004,
+      "crashes": 1,
+      "rate": 0.02576587680736342
+    }
+  ]
+}

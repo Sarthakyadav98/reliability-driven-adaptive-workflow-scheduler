@@ -1,0 +1,96 @@
+{
+  "scheduler": "adaptive-qubo",
+  "workflow": "demo-pipeline",
+  "n_tasks": 10,
+  "n_workers": 3,
+  "completed": true,
+  "makespan": 44.230189860002916,
+  "deadline": 70.0,
+  "deadline_met": true,
+  "n_attempts": 16,
+  "n_failed_attempts": 4,
+  "n_replicas": 1,
+  "n_cancelled": 1,
+  "n_revoked": 1,
+  "n_crashes": 1,
+  "busy_time": 75.94061621335032,
+  "useful_time": 59.83617433335895,
+  "wasted_time": 16.104441879991406,
+  "decision_time_total": 0.02223303500068141,
+  "n_decisions": 12,
+  "end_time": 44.230189860002916,
+  "tasks_succeeded": 10,
+  "n_retries": 4,
+  "replicas_started": 1,
+  "recovery_time_mean": 8.820403808895207,
+  "resource_overhead": 0.26914223810951604,
+  "mean_decision_ms": 1.8527529167234509,
+  "task_success_rate": 1.0,
+  "utilization": 0.5723135898332266,
+  "fail_worker_unavailable": 1,
+  "fail_injected": 3,
+  "fail_timeout": 0,
+  "fail_dispatch_error": 0,
+  "fail_task_error": 0,
+  "n_task_retries": 4,
+  "ft_execute": 9,
+  "ft_retry": 4,
+  "ft_replicate": 1,
+  "replicas_requested": 1,
+  "replica_shortfall": 0,
+  "n_reassign_decisions": 1,
+  "n_solver_calls": 2,
+  "solver_time": 0.017387414001859725,
+  "solver_build_time": 0.0009644800011301413,
+  "solver_anneal_time": 0.015620222999132238,
+  "solver_vars": 15,
+  "qubo_infeasible": 0,
+  "qubo_infeasible_tasks": 0,
+  "greedy_gap_sum": 0.0,
+  "mean_solver_ms": 8.693707000929862,
+  "mean_solver_build_ms": 0.48224000056507066,
+  "mean_solver_anneal_ms": 7.810111499566119,
+  "mean_solver_vars": 7.5,
+  "qubo_feasibility_rate": 1.0,
+  "wall_seconds": 7.5,
+  "workers": [
+    {
+      "index": 0,
+      "label": "worker-1",
+      "speed": 1.0
+    },
+    {
+      "index": 1,
+      "label": "worker-2",
+      "speed": 1.5
+    },
+    {
+      "index": 2,
+      "label": "worker-3",
+      "speed": 0.8
+    }
+  ],
+  "final_reliability": [
+    {
+      "worker": 0,
+      "R": 0.9078215033914078,
+      "perf": 1.010397909484779,
+      "crashes": 0,
+      "rate": 0.015417137979865837
+    },
+    {
+      "worker": 1,
+      "R": 0.7263507013398368,
+      "perf": 1.0088576463632588,
+      "crashes": 3,
+      "rate": 0.0509702251023201
+    },
+    {
+      "worker": 2,
+      "R": 0.8539823578471968,
+      "perf": 1.0059927136001836,
+      "crashes": 1,
+      "rate": 0.025163654787254207
+    }
+  ]
+}

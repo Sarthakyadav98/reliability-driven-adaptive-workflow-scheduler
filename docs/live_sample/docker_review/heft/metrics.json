@@ -1,0 +1,77 @@
+{
+  "scheduler": "heft",
+  "workflow": "demo-pipeline",
+  "n_tasks": 10,
+  "n_workers": 3,
+  "completed": false,
+  "makespan": null,
+  "deadline": 70.0,
+  "deadline_met": false,
+  "n_attempts": 9,
+  "n_failed_attempts": 5,
+  "n_replicas": 0,
+  "n_cancelled": 0,
+  "n_revoked": 0,
+  "n_crashes": 1,
+  "busy_time": 39.912691699998206,
+  "useful_time": 25.719618300002672,
+  "wasted_time": 14.193073399995532,
+  "decision_time_total": 0.0001882740016299067,
+  "n_decisions": 7,
+  "end_time": 25.5234426533328,
+  "tasks_succeeded": 4,
+  "n_retries": 4,
+  "replicas_started": 0,
+  "recovery_time_mean": 6.034463013335577,
+  "resource_overhead": 0.5518384151134178,
+  "mean_decision_ms": 0.02689628594712953,
+  "task_success_rate": 0.4,
+  "utilization": 0.5212553317108588,
+  "fail_worker_unavailable": 1,
+  "fail_injected": 4,
+  "fail_timeout": 0,
+  "fail_dispatch_error": 0,
+  "fail_task_error": 0,
+  "n_task_retries": 5,
+  "wall_seconds": 3.83,
+  "workers": [
+    {
+      "index": 0,
+      "label": "worker-1",
+      "speed": 1.0
+    },
+    {
+      "index": 1,
+      "label": "worker-2",
+      "speed": 1.5
+    },
+    {
+      "index": 2,
+      "label": "worker-3",
+      "speed": 0.8
+    }
+  ],
+  "final_reliability": [
+    {
+      "worker": 0,
+      "R": 0.7444111161467977,
+      "perf": 1.0028456363667586,
+      "crashes": 1,
+      "rate": 0.04705478310524302
+    },
+    {
+      "worker": 1,
+      "R": 0.5346899777243806,
+      "perf": 1.0033203975001015,
+      "crashes": 4,
+      "rate": 0.09980797087434609
+    },
+    {
+      "worker": 2,
+      "R": 0.8069039116396454,
+      "perf": 1.0039248783999937,
+      "crashes": 0,
+      "rate": 0.03420373261474917
+    }
+  ]
+}

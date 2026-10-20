@@ -150,10 +150,25 @@ configured failure rates 0.02 / 0.30 / 0.0), the 10-task `workflows/demo_dag.jso
 (includes a deterministic `fail_once` task), and worker-2 made unavailable at
 t=8 for 10 units. Sample logs: `docs/live_sample/`.
 
-| scheduler | completed | makespan (units) | wall time | failed attempts (unavailable / injected) |
-|---|---|---|---|---|
-| eft-retry | yes | 43.9 | 6.6 s | 4 (1 / 3) |
-| adaptive | yes | 44.7 | 6.7 s | 4 (1 / 3) |
+**Review run, four schedulers** (20 Oct 2026; `--compare heft,eft-retry,adaptive,adaptive-qubo`,
+max 3 retries per task; files in `docs/live_sample/docker_review/`):
+
+| scheduler | completed | makespan (units) | failed attempts | retries | replicas started | resource overhead | wall time |
+|---|---|---|---|---|---|---|---|
+| heft | no | failed | 5 | 4 | 0 | 0.55 | 3.83 s |
+| eft-retry | yes | 43.69 | 4 | 4 | 0 | 0.18 | 6.56 s |
+| adaptive | yes | 44.51 | 4 | 4 | 0 | 0.20 | 6.68 s |
+| adaptive-qubo | yes | 44.23 | 4 | 4 | 1 | 0.27 | 7.50 s |
+
+HEFT kept resubmitting `clean_b` to its planned worker (worker-2, failure rate
+0.3) until the retry limit. The adaptive-qubo replica of `report` was cancelled
+when the original won. A teammate's independent run of the same command
+recorded adaptive 55.09 and adaptive-qubo 55.13 (HEFT failed, eft-retry 43.57).
+Single live runs vary noticeably: timing changes placements, and placements
+change which seeded failures are drawn.
+
+Earlier two-scheduler run: eft-retry 43.9 (6.6 s), adaptive 44.7 (6.7 s), each with
+4 failed attempts (1 unavailable / 3 injected).
 
 `docker compose stop worker-2` mid-run (a real container stop, not the admin
 endpoint) was detected as `worker_unavailable` in about 0.1 s. The lost attempt

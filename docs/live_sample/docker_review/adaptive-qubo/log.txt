@@ -1,0 +1,47 @@
+t=   0.00  ingest -> W1 (p_success=0.94)
+t=   0.00  ingest started on W1
+t=   4.04  ingest succeeded on W1 (took 4.0)
+t=   4.04  clean_a -> W0 (p_success=0.90); avoided earliest-finish W1 (p_success=0.94)
+t=   4.04  clean_b -> W1 (p_success=0.94)
+t=   4.04  clean_c -> W2 (p_success=0.91); avoided earliest-finish W1 (p_success=0.95)
+t=   4.04  clean_a started on W0
+t=   4.04  clean_b started on W1
+t=   4.04  clean_c started on W2
+t=   8.10  W1 UNAVAILABLE - running clean_b lost after 4.1
+t=   8.10  clean_b -> W0 (p_success=0.84) [retry]
+t=  11.69  clean_c succeeded on W2 (took 7.6)
+t=  11.69  validate -> W2 (p_success=0.87)
+t=  11.69  validate started on W2
+t=  12.18  clean_a succeeded on W0 (took 8.1)
+t=  12.18  clean_b started on W0
+t=  15.48  validate FAILED on W2 [injected]: fail_once: injected failure on attempt 1
+t=  15.48  validate -> W0 (p_success=0.86); avoided earliest-finish W2 (p_success=0.74) [retry]
+t=  18.20  W1 available again
+t=  18.20  reassign validate: W0 now expected 9.2 vs 5.3 -> W1
+t=  18.20    reassign: validate withdrawn from W0's queue
+t=  18.20  validate started on W1
+t=  20.21  clean_b succeeded on W0 (took 8.0)
+t=  20.21  features -> W1 (p_success=0.76)
+t=  20.76  validate FAILED on W1 [injected]: configured failure (rate 0.3)
+t=  20.76  validate -> W0 (p_success=0.85) [retry]
+t=  20.76  validate started on W0
+t=  20.76  features started on W1
+t=  26.80  validate succeeded on W0 (took 6.0)
+t=  27.46  features succeeded on W1 (took 6.7)
+t=  27.46  train -> W1 (p_success=0.66)
+t=  27.46  train started on W1
+t=  35.50  train succeeded on W1 (took 8.0)
+t=  35.50  evaluate -> W1 (p_success=0.84)
+t=  35.50  report -> W0 (p_success=0.94); avoided earliest-finish W1 (p_success=0.89); REPLICA on W2 [p_success=0.94 on best worker; replica saves expected time (gain 0.22, load pressure 0.7)]
+t=  35.50  report started on W0
+t=  35.50  evaluate started on W1
+t=  35.50  report started on W2 (replica)
+t=  39.58  report succeeded on W0 (took 4.1)
+t=  39.58    cancelled redundant copy of report on W2
+t=  39.58  evaluate succeeded on W1 (took 4.1)
+t=  39.58  publish -> W1 (p_success=0.92)
+t=  39.58  publish started on W1
+t=  41.19  publish FAILED on W1 [injected]: configured failure (rate 0.3)
+t=  41.19  publish -> W0 (p_success=0.95); avoided earliest-finish W1 (p_success=0.90) [retry]
+t=  41.19  publish started on W0
+t=  44.23  publish succeeded on W0 (took 3.0)
