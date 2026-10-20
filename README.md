@@ -92,6 +92,8 @@ One local web page with four views, all running the same engine as the experimen
   by scenario, baseline and failure rate, with confidence intervals and the limits.
 - **Recorded runs**: the committed replays in `docs/demo/`, the fallback with no cluster.
 
+Step-by-step demo script: `docs/DEMO_GUIDE.md`.
+
 ## Replay viewer (for demos)
 
 Every run can be replayed in a self-contained HTML page: no server, no

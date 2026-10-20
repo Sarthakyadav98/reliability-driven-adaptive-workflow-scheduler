@@ -270,6 +270,7 @@ http://127.0.0.1:8003</textarea></div>
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
           <h2>Orchestrator log</h2><span class="pill" id="live-state">idle</span>
         </div>
+        <div class="hint">Single runs on real containers: one failure draw can decide the makespan. What to look for is recovery: static HEFT keeps resubmitting to the crashed worker and fails, while the dynamic schedulers detect the crash and retry elsewhere.</div>
         <div class="console" id="console" aria-live="polite">Waiting for a run. Check the workers, then press “Run on real workers”.</div>
         <div class="tablewrap"><table id="live-table"></table></div>
       </div>
@@ -372,11 +373,7 @@ http://127.0.0.1:8003</textarea></div>
     const item = (s) => `
       <label class="sched"><input type="checkbox" value="${esc(s.name)}"${defaults.includes(s.name) ? " checked" : ""}>
         <b>${esc(s.name)}</b><span>${esc(s.info)}</span></label>`;
-    const main = META.schedulers.filter((s) => PRIMARY.includes(s.name)).sort((a, b) => PRIMARY.indexOf(a.name) - PRIMARY.indexOf(b.name));
-    const more = META.schedulers.filter((s) => !PRIMARY.includes(s.name));
-    host.innerHTML = main.map(item).join("") + (more.length ? `<details${more.some((s) => defaults.includes(s.name)) ? " open" : ""}>
-      <summary class="hint" style="cursor:pointer;padding:4px 2px">More baselines and ablations (${more.length})</summary>
-      <div class="scheds" style="margin-top:4px">${more.map(item).join("")}</div></details>` : "");
+    host.innerHTML = PRIMARY.map((n) => META.schedulers.find((s) => s.name === n)).filter(Boolean).map(item).join("");
     const limit = () => {
       const boxes = [...host.querySelectorAll("input")], n = boxes.filter((b) => b.checked).length;
       boxes.forEach((b) => (b.disabled = !b.checked && n >= META.limits.schedulers));
@@ -440,7 +437,7 @@ http://127.0.0.1:8003</textarea></div>
   const COLS = [
     ["makespan", "Makespan", 1, "min"], ["n_failed_attempts", "Failed attempts", 0, "min"],
     ["n_retries", "Retries", 0, "min"], ["replicas_started", "Replicas", 0, null],
-    ["resource_overhead", "Wasted / useful", 2, "min"], ["mean_decision_ms", "ms / decision", 2, "min"],
+    ["resource_overhead", "Wasted / useful", 2, "min"], ["mean_decision_ms", "ms / decision", 2, null],
   ];
   function comparisonTable(rows) {
     const done = rows.filter((r) => r.completed);
@@ -511,7 +508,7 @@ http://127.0.0.1:8003</textarea></div>
     getSpu = range("spu", 2);
     liveCrashes = crashEditor("chaos", "add-chaos", () => Math.max(1, urlList().length), [{ worker: 1, at: 8, downtime: 10 }]);
     $("urls").addEventListener("change", () => liveCrashes.refreshWorkers());
-    getLiveScheds = schedList("live-scheds", ["heft", "eft-retry", "adaptive", "adaptive-qubo"]);
+    getLiveScheds = schedList("live-scheds", ["heft", "eft-retry", "adaptive"]);
     $("check").addEventListener("click", checkWorkers);
     $("run-live").addEventListener("click", runLive);
   }
@@ -559,9 +556,11 @@ http://127.0.0.1:8003</textarea></div>
   // ---------------------------------------------------------------- held-out results
   let RESULTS = null, getScn, rP = 0.3;
   const BASES = [["eft-retry", "--s1"], ["replicate-2", "--s2"], ["heft", "--s4"], ["eft-threshold", "--s3"],
-    ["reliability-heft", "--s5"], ["least-loaded", "--s6"], ["round-robin", "--s6"], ["adaptive-qubo", "--s5"]];
+    ["reliability-heft", "--s5"], ["adaptive-qubo", "--s6"]];
+  const TABLE_ORDER = BASES.map(([b]) => b).concat(["least-loaded", "round-robin", "adaptive-no-reassign", "adaptive-no-replication", "adaptive-threshold"]);
   const LABEL = { "eft-retry": "EFT-retry", "replicate-2": "Replicate-2", "heft": "Static HEFT", "eft-threshold": "Threshold FT",
-    "reliability-heft": "Reliability term only", "least-loaded": "Least-loaded", "round-robin": "Round Robin", "adaptive-qubo": "Adaptive QUBO" };
+    "reliability-heft": "Reliability term only", "least-loaded": "Least-loaded", "round-robin": "Round Robin", "adaptive-qubo": "Adaptive QUBO",
+    "adaptive-no-reassign": "Ablation: no reassignment", "adaptive-no-replication": "Ablation: no replication", "adaptive-threshold": "Ablation: threshold FT rule" };
   const shownBases = new Set(["eft-retry", "replicate-2", "heft", "eft-threshold"]);
   async function loadResults() {
     try { RESULTS = await api("/api/results"); } catch (e) { $("r-chart").innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
@@ -630,8 +629,7 @@ http://127.0.0.1:8003</textarea></div>
   function drawTable() {
     if (!RESULTS || !getScn) return;
     const scn = getScn(), rows = RESULTS.rows.filter((r) => r.scenario === scn && r.p === rP);
-    const order = BASES.map(([b]) => b).concat(rows.map((r) => r.vs));
-    rows.sort((a, b) => order.indexOf(a.vs) - order.indexOf(b.vs));
+    rows.sort((a, b) => TABLE_ORDER.indexOf(a.vs) - TABLE_ORDER.indexOf(b.vs));
     const pct = (a) => `${fmt(100 * a, 0)}%`;
     $("r-table").innerHTML = `<thead><tr><th>Adaptive vs</th><th>Makespan change</th><th>Adaptive wins</th><th>Completed (A / base)</th><th>Deadline met (A / base)</th><th>Wasted / useful (A / base)</th><th>Pairs</th></tr></thead><tbody>${rows.map((r) => `
       <tr><td><b>${esc(LABEL[r.vs] || r.vs)}</b> <span class="hint mono">${esc(r.vs)}</span></td>

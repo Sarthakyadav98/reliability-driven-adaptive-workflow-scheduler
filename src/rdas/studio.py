@@ -79,6 +79,11 @@ def _find(rel: str) -> Path | None:
     return None
 
 
+def _crash(c: dict) -> tuple[int, float, float]:
+    """(worker, at, downtime) with times clamped to a sane range."""
+    return int(c["worker"]), _clamp(float(c["at"]), 0.0, 10_000.0), _clamp(float(c["downtime"]), 0.5, 1_000.0)
+
+
 # ---------------------------------------------------------------- scenario lab
 def _order(names: list[str]) -> list[str]:
     """Baseline in the left column (eft-retry, the closest one, if chosen) and the first adaptive scheduler on the right."""
@@ -94,10 +99,9 @@ def simulate(spec: dict) -> dict:
     if not names:
         raise ValueError("choose at least one scheduler")
     preset = spec.get("preset", "demo")
-    seed = int(spec.get("seed", 100))
+    seed = int(_clamp(int(spec.get("seed", 100)), 0, 1_000_000))
     p = float(_clamp(float(spec.get("failure_prob", 0.0)), *LIMITS["failure_prob"]))
-    crashes = [ScriptedCrash(int(c["worker"]), float(c["at"]), float(c["downtime"]))
-               for c in spec.get("crashes", [])[:LIMITS["crashes"]]]
+    crashes = [ScriptedCrash(*_crash(c)) for c in spec.get("crashes", [])[:LIMITS["crashes"]]]
 
     if preset == "demo":
         wf, pool = demo_workflow(), demo_pool()
@@ -194,7 +198,7 @@ JOB: dict = {"state": "idle", "log": [], "rows": [], "viewer": None, "error": No
 def _live_job(spec: dict) -> None:
     urls = spec["urls"]
     names = [n for n in spec["schedulers"] if n in REGISTRY][:LIMITS["schedulers"]]
-    chaos = [(int(c["worker"]), float(c["at"]), float(c["downtime"])) for c in spec.get("crashes", [])]
+    chaos = [ch for ch in (_crash(c) for c in spec.get("crashes", [])[:LIMITS["crashes"]]) if 0 <= ch[0] < len(urls)]
     spu = float(_clamp(float(spec.get("seconds_per_unit", 0.15)), 0.05, 1.0))
     wf_path = _find("workflows/demo_dag.json")
     out_root = Path.cwd() / "results" / "studio" / time.strftime("%Y%m%d-%H%M%S")
@@ -265,7 +269,6 @@ def held_out_results() -> dict:
 RECORDINGS = {
     "replay_docker_review.html": "Live Docker review run: HEFT, EFT-retry, adaptive, adaptive-QUBO",
     "replay_simulation.html": "Simulated crashes: fast, flaky worker crashes every 20 units",
-    "replay_docker.html": "Earlier live Docker run: EFT-retry vs adaptive",
 }
 
 
@@ -328,6 +331,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
         except (ValueError, KeyError, TypeError, RuntimeError) as e:
             self._json({"error": str(e)}, 400)
+        except Exception as e:  # never drop the connection: the page shows the message
+            self._json({"error": f"{e.__class__.__name__}: {e}"}, 500)
 
 
 def main(argv: list[str] | None = None) -> None:
