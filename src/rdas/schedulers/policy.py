@@ -96,8 +96,11 @@ class PolicyScheduler(Scheduler):
                     continue
                 wait = view.wait_before(w, tid, perf_aware=cost.reliability_aware)
                 here, d_here, _ = cost.expected(view, tid, w, wait)
+                # Never move a task back onto a worker it already failed on: that would undo the
+                # retry policy's "retry elsewhere" choice and can bounce the task onto the flaky worker.
+                failed = set(view.failed_on(tid))
                 alts = [(cost.expected(view, tid, j, avail[j])[0], j) for j in avail
-                        if j != w and view.is_up(j)]
+                        if j != w and view.is_up(j) and j not in failed]
                 if not alts:
                     continue
                 best_alt, j = min(alts)
