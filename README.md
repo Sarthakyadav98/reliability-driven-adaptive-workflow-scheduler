@@ -19,7 +19,7 @@ Docker containers) that execute real tasks and fail for real.
 python -m venv .venv
 # Windows: .venv\Scripts\activate     Linux/macOS: source .venv/bin/activate
 pip install -e ".[dev]"
-pytest -q                      # 76 tests (engine invariants, FT policies, QUBO vs exact, HTTP agents, viewer)
+pytest -q                      # 81 tests (engine invariants, FT policies, QUBO vs exact, HTTP agents, viewer, studio)
 ```
 
 If you skip activation, call the venv's Python directly: `.venv\Scripts\python.exe ...`.
@@ -71,6 +71,26 @@ Worker API: `GET /health`, `GET /capabilities`, `POST /execute`,
 `POST /cancel/<attempt>`, `GET /tasks/<attempt>`, and (opt-in) `POST /admin/fail`.
 Task types are a strict allowlist: `sleep`, `cpu_benchmark`, `hash_payload`,
 `fail_once`, `slow_task`. Payloads are data, never code.
+
+## RDAS Studio (demo console)
+
+```bash
+python -m rdas.studio            # opens http://127.0.0.1:8765 (standard library only, offline)
+```
+
+One local web page with four views, all running the same engine as the experiments:
+
+- **Scenario lab**: pick the demo workflow or a random fleet (seeds 100-129 are the
+  held-out instances), a failure probability, scripted crashes and up to four
+  schedulers. Runs in simulation within a few seconds; shows the outcome table and the
+  side-by-side replay.
+- **Live cluster**: check the worker agents, set a chaos crash, run schedulers one
+  after another on real containers with a streaming orchestrator log, then replay.
+  Start the workers first: `docker compose up -d --wait worker-1 worker-2 worker-3`
+  (or `python scripts/local_cluster.py`). Live runs vary from run to run.
+- **Held-out results**: the paired comparisons from `docs/paired_vs_baselines.csv`
+  by scenario, baseline and failure rate, with confidence intervals and the limits.
+- **Recorded runs**: the committed replays in `docs/demo/`, the fallback with no cluster.
 
 ## Replay viewer (for demos)
 
@@ -125,6 +145,8 @@ src/rdas/
   workers/            agent.py (HTTP worker), task_registry.py (allowlisted task types)
   experiments.py      simulation sweeps (python -m rdas.experiments)
   live.py             real-execution runner (python -m rdas.live)
+  studio.py/.html     demo console (python -m rdas.studio)
+  viewer.py           self-contained replay viewer (python -m rdas.viewer)
   viz.py              sweep plots, Gantt charts, reliability timelines, DAG drawing
 scripts/              demo, experiments, paired stats, sensitivity, QUBO benchmark, tuning, cluster/docker helpers
 workflows/            JSON workflows          configs/  worker pool config

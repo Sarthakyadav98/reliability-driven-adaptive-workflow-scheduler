@@ -15,13 +15,17 @@ from pathlib import Path
 TEMPLATE = Path(__file__).with_name("viewer_template.html")
 
 
-def build_viewer(runs: list[dict], out_path, title: str = "", subtitle: str = "", note: str = "") -> Path:
+def build_viewer_html(runs: list[dict], title: str = "", subtitle: str = "", note: str = "") -> str:
     if not runs:
         raise ValueError("need at least one run")
     data = {"runs": runs, "title": title, "subtitle": subtitle, "note": note}
     # Embedded in <script type="application/json">: neutralise "</" so no value can close the tag.
     payload = json.dumps(data).replace("</", "<\\/")
-    html = TEMPLATE.read_text(encoding="utf-8").replace("__RDAS_DATA__", payload)
+    return TEMPLATE.read_text(encoding="utf-8").replace("__RDAS_DATA__", payload)
+
+
+def build_viewer(runs: list[dict], out_path, title: str = "", subtitle: str = "", note: str = "") -> Path:
+    html = build_viewer_html(runs, title, subtitle, note)
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")

@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RDAS Studio</title>
+<style>
+/* Same tokens as the replay viewer, so the embedded replays look native. System fonts only (offline). */
+:root {
+  --bg: #f4f6f9; --panel: #ffffff; --ink: #141b24; --muted: #5d6877; --line: #d9dee6; --grid: #eceff4;
+  --accent: #2c55c9; --accent-soft: #dfe7fb; --ok: #2b8a5a; --ok-soft: #dcefe4; --bad: #c4432c; --bad-soft: #f8e1dc;
+  --warn: #b26b00; --warn-soft: #f8ead2;
+  --s1: #2c55c9; --s2: #c4432c; --s3: #1f8a7a; --s4: #b26b00; --s5: #7a4fc9; --s6: #5d6877;
+  --font-ui: "Segoe UI", "Helvetica Neue", system-ui, -apple-system, Arial, sans-serif;
+  --font-mono: "Cascadia Mono", "SF Mono", Consolas, "Liberation Mono", monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --panel: #161d26; --ink: #e6ebf2; --muted: #98a3b3; --line: #2a3442; --grid: #1f2833;
+    --accent: #7f9dff; --accent-soft: #23305a; --ok: #5fcf95; --ok-soft: #173a29; --bad: #ff8a72; --bad-soft: #43231d;
+    --warn: #f1b75e; --warn-soft: #3d2d12;
+    --s1: #7f9dff; --s2: #ff8a72; --s3: #4fc7b3; --s4: #f1b75e; --s5: #b79bff; --s6: #98a3b3; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --panel: #161d26; --ink: #e6ebf2; --muted: #98a3b3; --line: #2a3442; --grid: #1f2833;
+  --accent: #7f9dff; --accent-soft: #23305a; --ok: #5fcf95; --ok-soft: #173a29; --bad: #ff8a72; --bad-soft: #43231d;
+  --warn: #f1b75e; --warn-soft: #3d2d12;
+  --s1: #7f9dff; --s2: #ff8a72; --s3: #4fc7b3; --s4: #f1b75e; --s5: #b79bff; --s6: #98a3b3; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 15px; line-height: 1.45; }
+.mono, .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+button, select, input, textarea { font: inherit; color: var(--ink); }
+button { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.55; cursor: progress; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; padding: 9px 16px; }
+button.ghost { border-color: transparent; background: transparent; color: var(--muted); padding: 4px 8px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type=number], input[type=text], select, textarea { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; min-width: 0; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+
+/* top bar */
+.top { position: sticky; top: 0; z-index: 10; background: var(--panel); border-bottom: 1px solid var(--line); }
+.top-in { max-width: 1800px; margin: 0 auto; padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 10px 24px; align-items: center; }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.mark { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 0.8rem; letter-spacing: 0.02em; flex: none; }
+.brand b { font-size: 1.05rem; display: block; line-height: 1.15; }
+.brand span { color: var(--muted); font-size: 0.8rem; display: block; }
+nav { display: flex; gap: 4px; flex-wrap: wrap; flex: 1; }
+nav button { border: none; background: transparent; color: var(--muted); font-weight: 600; padding: 8px 12px; border-radius: 7px; }
+nav button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); }
+nav button:hover { color: var(--ink); }
+
+main { max-width: 1800px; margin: 0 auto; padding: 16px; }
+.view { display: none; }
+.view.on { display: grid; gap: 16px; }
+.layout { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 16px; align-items: start; }
+.side { position: sticky; top: 70px; max-height: calc(100vh - 86px); overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 18px; }
+.side section { display: grid; gap: 10px; }
+.side h2, .card h2 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin: 0; }
+.field { display: grid; gap: 4px; }
+.field label, .lbl { font-size: 0.85rem; font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+.field label output { font-family: var(--font-mono); color: var(--accent); font-weight: 700; }
+.hint { color: var(--muted); font-size: 0.8rem; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--line); border-radius: 8px; padding: 3px; gap: 3px; }
+.seg button { border: none; border-radius: 6px; padding: 6px 8px; font-size: 0.86rem; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: #fff; font-weight: 600; }
+.toggle { display: flex; align-items: flex-start; gap: 9px; font-size: 0.88rem; cursor: pointer; }
+.toggle input { margin-top: 3px; accent-color: var(--accent); }
+.toggle small { display: block; color: var(--muted); font-size: 0.78rem; }
+.scheds { display: grid; gap: 4px; }
+.sched { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 9px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.sched input { grid-row: span 2; margin-top: 3px; accent-color: var(--accent); }
+.sched b { font-family: var(--font-mono); font-size: 0.85rem; }
+.sched span { color: var(--muted); font-size: 0.78rem; }
+.sched:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.sched:has(input:disabled:not(:checked)) { opacity: 0.5; }
+.crash { display: grid; grid-template-columns: 1.3fr 1fr 1fr auto; gap: 6px; align-items: end; }
+.crash .field label { font-size: 0.72rem; color: var(--muted); font-weight: 600; }
+.crash + .crash .field label { display: none; }
+.crash input, .crash select { width: 100%; }
+.workers { display: grid; gap: 4px; font-size: 0.84rem; }
+.worker { display: flex; justify-content: space-between; gap: 8px; padding: 5px 9px; border-radius: 7px; background: var(--bg); }
+.worker .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 7px; vertical-align: 1px; background: var(--muted); }
+.worker.ok .dot { background: var(--ok); }
+.worker.bad .dot { background: var(--bad); }
+.sticky-go { position: sticky; bottom: -16px; background: var(--panel); padding: 10px 0 0; display: grid; gap: 6px; }
+
+/* content */
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.empty { text-align: center; padding: 56px 24px; color: var(--muted); display: grid; gap: 10px; justify-items: center; }
+.empty h3 { color: var(--ink); margin: 0; font-size: 1.15rem; }
+.empty ol { text-align: left; margin: 4px 0 0; padding-left: 20px; display: grid; gap: 4px; }
+.headline { font-size: 1.05rem; }
+.headline strong { color: var(--accent); }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; font-variant-numeric: tabular-nums; }
+th:first-child, td:first-child { text-align: left; }
+thead th { color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+td.best { color: var(--ok); font-weight: 700; }
+td .tag { font-size: 0.76rem; padding: 2px 8px; border-radius: 999px; font-family: var(--font-mono); }
+.tag.ok { background: var(--ok-soft); color: var(--ok); }
+.tag.bad { background: var(--bad-soft); color: var(--bad); }
+.tag.warn { background: var(--warn-soft); color: var(--warn); }
+.frame { width: 100%; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); display: block; min-height: 600px; }
+.console { background: #0d1117; color: #d5dde8; font-family: var(--font-mono); font-size: 0.8rem; border-radius: 8px; padding: 12px; height: 320px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+.console .c-head { color: #7f9dff; font-weight: 700; }
+.console .c-bad { color: #ff8a72; }
+.console .c-ok { color: #5fcf95; }
+.console .c-chaos { color: #f1b75e; font-weight: 700; }
+.pill { font-size: 0.78rem; padding: 3px 10px; border-radius: 999px; font-family: var(--font-mono); background: var(--bg); color: var(--muted); }
+.pill.running { background: var(--accent-soft); color: var(--accent); }
+.pill.done { background: var(--ok-soft); color: var(--ok); }
+.pill.error { background: var(--bad-soft); color: var(--bad); }
+.callout { border-left: 3px solid var(--warn); background: var(--warn-soft); border-radius: 0 8px 8px 0; padding: 10px 14px; font-size: 0.88rem; }
+.callout b { color: var(--warn); }
+.cmd { font-family: var(--font-mono); font-size: 0.78rem; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; white-space: pre-wrap; word-break: break-all; }
+.error { color: var(--bad); font-size: 0.86rem; }
+.spinner { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; display: inline-block; animation: spin 0.8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* results */
+.controls { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: end; }
+.controls .field { min-width: 240px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 0.82rem; padding: 4px 10px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; }
+.chip i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.chip[aria-pressed="false"] { color: var(--muted); }
+.chip[aria-pressed="false"] i { opacity: 0.3; }
+.chart svg { width: 100%; height: auto; display: block; }
+.chart text { fill: var(--muted); font-family: var(--font-mono); font-size: 11px; }
+.chart .lab { fill: var(--ink); font-family: var(--font-ui); font-size: 12px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.kpi { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 2px; }
+.kpi b { font-size: 1.6rem; font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--accent); line-height: 1.2; }
+.kpi span { font-size: 0.85rem; font-weight: 600; }
+.kpi small { color: var(--muted); font-size: 0.78rem; }
+.reclist { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.rec { text-align: left; display: grid; gap: 4px; padding: 14px; border-radius: 10px; }
+.rec[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.rec b { font-size: 0.95rem; }
+.rec span { color: var(--muted); font-size: 0.8rem; font-family: var(--font-mono); }
+
+@media (max-width: 1000px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .side { position: static; max-height: none; }
+}
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <div class="brand"><div class="mark" aria-hidden="true">RD</div>
+      <div><b>RDAS Studio</b><span>Reliability-driven adaptive workflow scheduling</span></div></div>
+    <nav role="tablist" aria-label="Views">
+      <button role="tab" data-view="lab" aria-selected="true">Scenario lab</button>
+      <button role="tab" data-view="live" aria-selected="false">Live cluster</button>
+      <button role="tab" data-view="results" aria-selected="false">Held-out results</button>
+      <button role="tab" data-view="recorded" aria-selected="false">Recorded runs</button>
+    </nav>
+    <button id="theme" class="ghost" title="Toggle light / dark" aria-label="Toggle light or dark theme">◐ Theme</button>
+  </div>
+</header>
+
+<main>
+<!-- ================================================================ SCENARIO LAB -->
+<section class="view on" id="v-lab" role="tabpanel">
+  <div class="layout">
+    <aside class="side" aria-label="Scenario configuration">
+      <section>
+        <h2>1 · Workload</h2>
+        <div class="seg" id="preset">
+          <button data-v="demo" aria-pressed="true">Demo workflow</button>
+          <button data-v="fleet" aria-pressed="false">Random fleet</button>
+        </div>
+        <div id="demo-opts" class="workers"></div>
+        <div id="fleet-opts" hidden>
+          <div class="field"><label for="n_tasks">Tasks <output id="o-n_tasks">60</output></label><input type="range" id="n_tasks" min="10" max="120" step="5" value="60"></div>
+          <div class="field"><label for="n_workers">Workers <output id="o-n_workers">6</output></label><input type="range" id="n_workers" min="3" max="10" step="1" value="6"></div>
+          <div class="field"><label for="seed">Seed</label><input type="number" id="seed" value="100" min="0" max="100000"><span class="hint">Seeds 100–129 are the held-out evaluation instances.</span></div>
+          <label class="toggle"><input type="checkbox" id="degrade"><span>Degrading workers<small>A third of the fleet becomes 8× more crash-prone mid-run.</small></span></label>
+        </div>
+        <label class="toggle"><input type="checkbox" id="warm" checked><span>Warm start<small id="warm-hint">The monitor has seen one earlier workflow on this pool.</small></span></label>
+      </section>
+
+      <section>
+        <h2>2 · Faults</h2>
+        <div class="field"><label for="p">Task-failure probability <output id="o-p">0.00</output></label><input type="range" id="p" min="0" max="0.5" step="0.05" value="0"><span class="hint">Chance that an average task is hit by a random crash (Poisson, seeded).</span></div>
+        <div class="lbl">Scripted crashes <button class="ghost" id="add-crash" type="button">+ add</button></div>
+        <div id="crashes" style="display:grid;gap:8px"></div>
+      </section>
+
+      <section>
+        <h2>3 · Schedulers <span class="hint" style="text-transform:none;letter-spacing:0">(up to 4)</span></h2>
+        <div class="scheds" id="scheds"></div>
+      </section>
+
+      <div class="sticky-go">
+        <button class="primary" id="run">▶ Run simulation</button>
+        <div class="error" id="lab-err" role="alert"></div>
+      </div>
+    </aside>
+
+    <div style="display:grid;gap:16px;min-width:0">
+      <div class="card" id="lab-empty">
+        <div class="empty">
+          <h3>Configure a scenario and run it</h3>
+          <div>The demo preset is ready: the fastest worker, W1, is also the flakiest and crashes every 20 time units.</div>
+          <ol><li>Pick the workload and faults on the left.</li><li>Choose up to four schedulers.</li><li>Run it, then replay the two columns side by side (Space plays, arrow keys step).</li></ol>
+        </div>
+      </div>
+      <div class="card" id="lab-out" hidden>
+        <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline">
+          <h2>Outcome</h2><span class="hint" id="lab-scn"></span>
+        </div>
+        <div class="headline" id="lab-headline"></div>
+        <div class="tablewrap"><table id="lab-table"></table></div>
+        <div class="hint">One instance, for illustration. Statistical comparisons are in <b>Held-out results</b>.</div>
+      </div>
+    </div>
+  </div>
+  <iframe class="frame" id="lab-frame" title="Schedule replay" hidden></iframe>
+</section>
+
+<!-- ================================================================ LIVE -->
+<section class="view" id="v-live" role="tabpanel">
+  <div class="layout">
+    <aside class="side" aria-label="Live cluster configuration">
+      <section>
+        <h2>1 · Worker agents</h2>
+        <div class="field"><label for="urls">Agent URLs (one per line)</label>
+          <textarea id="urls" rows="3" class="mono" style="font-size:0.82rem">http://127.0.0.1:8001
+http://127.0.0.1:8002
+http://127.0.0.1:8003</textarea></div>
+        <button id="check" type="button">Check workers</button>
+        <div class="workers" id="live-workers"></div>
+        <details><summary class="hint" style="cursor:pointer">How to start the workers</summary>
+          <div style="display:grid;gap:6px;margin-top:8px">
+            <span class="hint">Docker (from the repository root):</span>
+            <div class="cmd">docker compose up -d --wait worker-1 worker-2 worker-3</div>
+            <span class="hint">Without Docker:</span>
+            <div class="cmd">python scripts/local_cluster.py</div>
+          </div></details>
+      </section>
+      <section>
+        <h2>2 · Chaos</h2>
+        <div class="lbl">Make a worker unavailable <button class="ghost" id="add-chaos" type="button">+ add</button></div>
+        <div id="chaos" style="display:grid;gap:8px"></div>
+        <div class="field"><label for="spu">Seconds per time unit <output id="o-spu">0.15</output></label><input type="range" id="spu" min="0.05" max="0.5" step="0.05" value="0.15"></div>
+      </section>
+      <section>
+        <h2>3 · Schedulers <span class="hint" style="text-transform:none;letter-spacing:0">(run one after another)</span></h2>
+        <div class="scheds" id="live-scheds"></div>
+      </section>
+      <div class="sticky-go">
+        <button class="primary" id="run-live">▶ Run on real workers</button>
+        <div class="error" id="live-err" role="alert"></div>
+      </div>
+    </aside>
+    <div style="display:grid;gap:16px;min-width:0">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+          <h2>Orchestrator log</h2><span class="pill" id="live-state">idle</span>
+        </div>
+        <div class="console" id="console" aria-live="polite">Waiting for a run. Check the workers, then press “Run on real workers”.</div>
+        <div class="tablewrap"><table id="live-table"></table></div>
+      </div>
+    </div>
+  </div>
+  <iframe class="frame" id="live-frame" title="Live schedule replay" hidden></iframe>
+</section>
+
+<!-- ================================================================ RESULTS -->
+<section class="view" id="v-results" role="tabpanel">
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline">
+      <h2>Held-out evaluation · adaptive vs each baseline</h2>
+      <span class="hint">60-task DAGs · 6 heterogeneous workers · 30 held-out instances per point · identical faults · paired on runs both completed</span>
+    </div>
+    <div class="kpis" id="kpis"></div>
+  </div>
+  <div class="card">
+    <div class="controls">
+      <div class="field"><span class="lbl">Scenario</span>
+        <div class="seg" id="r-scn">
+          <button data-v="cold" aria-pressed="true">Cold start</button>
+          <button data-v="warm" aria-pressed="false">Warm (2 prior)</button>
+          <button data-v="degrade" aria-pressed="false">Degrading</button>
+        </div></div>
+      <div class="field" style="flex:1"><span class="lbl">Baselines</span><div class="chips" id="r-base"></div></div>
+    </div>
+    <div class="chart" id="r-chart"></div>
+    <div class="hint">Paired % change in makespan; below 0 = adaptive faster. Bars: 95% CI. Filled points: CI excludes 0.</div>
+  </div>
+  <div class="card">
+    <div class="controls">
+      <div class="field"><span class="lbl">Task-failure probability</span>
+        <div class="seg" id="r-p"></div></div>
+    </div>
+    <div class="tablewrap"><table id="r-table"></table></div>
+    <div class="callout"><b>Honest limits.</b> The edge over reliability-blind retry (eft-retry) is small and mostly not significant. The reliability term alone (reliability-heft) shows no consistent effect. With rapidly degrading workers, replicating every task completes more workflows. The QUBO backend is feasible and competitive, not better, at about 8 ms more per decision.</div>
+    <div class="hint" id="r-src"></div>
+  </div>
+</section>
+
+<!-- ================================================================ RECORDED -->
+<section class="view" id="v-recorded" role="tabpanel">
+  <div class="card">
+    <h2>Recorded replays</h2>
+    <div class="hint">Committed runs, for when no cluster is available. Each one opens in the replay viewer below.</div>
+    <div class="reclist" id="reclist"></div>
+  </div>
+  <iframe class="frame" id="rec-frame" title="Recorded replay" hidden></iframe>
+</section>
+</main>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const fmt = (x, d = 1) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : Number(x).toFixed(d);
+  let META = null;
+  const PRIMARY = ["eft-retry", "replicate-2", "eft-threshold", "heft", "adaptive", "adaptive-qubo"];
+
+  // ---------------------------------------------------------------- theme + tabs
+  const root = document.documentElement;
+  try { const t = localStorage.getItem("rdas-theme"); if (t) root.dataset.theme = t; } catch (e) {}
+  $("theme").addEventListener("click", () => {
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+    try { localStorage.setItem("rdas-theme", root.dataset.theme); } catch (e) {}
+    document.querySelectorAll("iframe.frame").forEach(syncFrameTheme);
+    if (RESULTS) drawChart();
+  });
+  function syncFrameTheme(fr) {
+    try { if (root.dataset.theme) fr.contentDocument.documentElement.dataset.theme = root.dataset.theme; } catch (e) {}
+  }
+  document.querySelectorAll("nav button").forEach((b) => b.addEventListener("click", () => {
+    document.querySelectorAll("nav button").forEach((x) => x.setAttribute("aria-selected", x === b));
+    document.querySelectorAll(".view").forEach((v) => v.classList.toggle("on", v.id === "v-" + b.dataset.view));
+    if (b.dataset.view === "results" && !RESULTS) loadResults();
+    try { history.replaceState(null, "", "#" + b.dataset.view); } catch (e) {}
+  }));
+
+  // ---------------------------------------------------------------- shared widgets
+  function seg(id, onChange) {
+    const host = $(id);
+    host.addEventListener("click", (e) => {
+      const b = e.target.closest("button"); if (!b) return;
+      host.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b));
+      onChange(b.dataset.v);
+    });
+    return () => host.querySelector('[aria-pressed="true"]').dataset.v;
+  }
+  function range(id, digits = 0) {
+    const el = $(id), out = $("o-" + id);
+    const sync = () => { if (out) out.textContent = Number(el.value).toFixed(digits); };
+    el.addEventListener("input", sync); sync();
+    return () => Number(el.value);
+  }
+  function schedList(hostId, defaults) {
+    const host = $(hostId);
+    const item = (s) => `
+      <label class="sched"><input type="checkbox" value="${esc(s.name)}"${defaults.includes(s.name) ? " checked" : ""}>
+        <b>${esc(s.name)}</b><span>${esc(s.info)}</span></label>`;
+    const main = META.schedulers.filter((s) => PRIMARY.includes(s.name)).sort((a, b) => PRIMARY.indexOf(a.name) - PRIMARY.indexOf(b.name));
+    const more = META.schedulers.filter((s) => !PRIMARY.includes(s.name));
+    host.innerHTML = main.map(item).join("") + (more.length ? `<details${more.some((s) => defaults.includes(s.name)) ? " open" : ""}>
+      <summary class="hint" style="cursor:pointer;padding:4px 2px">More baselines and ablations (${more.length})</summary>
+      <div class="scheds" style="margin-top:4px">${more.map(item).join("")}</div></details>` : "");
+    const limit = () => {
+      const boxes = [...host.querySelectorAll("input")], n = boxes.filter((b) => b.checked).length;
+      boxes.forEach((b) => (b.disabled = !b.checked && n >= META.limits.schedulers));
+    };
+    host.addEventListener("change", limit); limit();
+    return () => [...host.querySelectorAll("input:checked")].map((b) => b.value);
+  }
+  function crashEditor(hostId, addId, workerCount, initial) {
+    const host = $(hostId);
+    const add = (c) => {
+      const n = workerCount();
+      const row = document.createElement("div");
+      row.className = "crash";
+      row.innerHTML = `
+        <div class="field"><label>Worker</label><select>${Array.from({ length: n }, (_, i) => `<option value="${i}"${i === c.worker ? " selected" : ""}>W${i}</option>`).join("")}</select></div>
+        <div class="field"><label>At t =</label><input type="number" min="0" step="1" value="${c.at}"></div>
+        <div class="field"><label>Down for</label><input type="number" min="1" step="1" value="${c.downtime}"></div>
+        <button class="ghost" type="button" aria-label="Remove crash">✕</button>`;
+      row.querySelector("button").addEventListener("click", () => row.remove());
+      host.appendChild(row);
+    };
+    $(addId).addEventListener("click", () => add({ worker: 0, at: 10, downtime: 10 }));
+    initial.forEach(add);
+    return {
+      get: () => [...host.querySelectorAll(".crash")].map((r) => {
+        const [w, at, d] = r.querySelectorAll("select, input");
+        return { worker: +w.value, at: +at.value, downtime: +d.value };
+      }),
+      reset: (list) => { host.innerHTML = ""; list.forEach(add); },
+      refreshWorkers: () => {
+        const n = workerCount();
+        host.querySelectorAll("select").forEach((s) => {
+          const v = Math.min(+s.value, n - 1);
+          s.innerHTML = Array.from({ length: n }, (_, i) => `<option value="${i}"${i === v ? " selected" : ""}>W${i}</option>`).join("");
+        });
+      },
+    };
+  }
+  function showFrame(fr, html, src) {
+    fr.hidden = false;
+    fr.onload = () => {
+      syncFrameTheme(fr);
+      const fit = () => { try { fr.style.height = fr.contentDocument.documentElement.scrollHeight + 4 + "px"; } catch (e) {} };
+      fit();
+      try { new ResizeObserver(fit).observe(fr.contentDocument.body); } catch (e) {}
+    };
+    if (html !== null) fr.srcdoc = html; else { fr.removeAttribute("srcdoc"); fr.src = src; }
+  }
+  async function api(path, body) {
+    const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    return j;
+  }
+
+  // ---------------------------------------------------------------- comparison table
+  function outcomeTag(r) {
+    if (!r.completed) return '<span class="tag bad">failed</span>';
+    return r.deadline_met ? '<span class="tag ok">deadline met</span>' : '<span class="tag warn">deadline missed</span>';
+  }
+  const COLS = [
+    ["makespan", "Makespan", 1, "min"], ["n_failed_attempts", "Failed attempts", 0, "min"],
+    ["n_retries", "Retries", 0, "min"], ["replicas_started", "Replicas", 0, null],
+    ["resource_overhead", "Wasted / useful", 2, "min"], ["mean_decision_ms", "ms / decision", 2, "min"],
+  ];
+  function comparisonTable(rows) {
+    const done = rows.filter((r) => r.completed);
+    const best = {};
+    COLS.forEach(([k, , , dir]) => { if (dir && done.length > 1) best[k] = Math.min(...done.map((r) => r[k] ?? Infinity)); });
+    return `<thead><tr><th>Scheduler</th><th>Outcome</th>${COLS.map(([, h]) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `
+      <tr><td class="mono"><b>${esc(r.scheduler)}</b></td><td>${outcomeTag(r)}</td>${COLS.map(([k, , d]) => {
+        const v = k === "makespan" && !r.completed ? null : r[k];
+        const isBest = r.completed && best[k] !== undefined && v === best[k];
+        return `<td class="${isBest ? "best" : ""}">${v === null ? "–" : fmt(v, d)}</td>`;
+      }).join("")}</tr>`).join("")}</tbody>`;
+  }
+  function headline(rows) {
+    const a = rows.find((r) => r.scheduler.startsWith("adaptive"));
+    const others = rows.filter((r) => !r.scheduler.startsWith("adaptive"));
+    if (!a || !others.length) return "";
+    if (!a.completed) return `<strong>${esc(a.scheduler)}</strong> did not complete this workflow.`;
+    const parts = others.map((b) => {
+      if (!b.completed) return `<b>${esc(b.scheduler)}</b> failed`;
+      const pct = 100 * (a.makespan - b.makespan) / b.makespan;
+      if (Math.abs(pct) < 0.5) return `tied with <b>${esc(b.scheduler)}</b>`;
+      return `${Math.abs(pct).toFixed(1)}% ${pct < 0 ? "faster" : "slower"} than <b>${esc(b.scheduler)}</b>`;
+    });
+    return `<strong>${esc(a.scheduler)}</strong> finished in ${fmt(a.makespan)} time units: ${parts.join(", ")}.`;
+  }
+
+  // ---------------------------------------------------------------- scenario lab
+  const DEMO_CRASHES = [0, 1, 2, 3, 4].map((k) => ({ worker: 1, at: 8 + 20 * k, downtime: 10 }));
+  let getPreset, getTasks, getWorkers, getP, getScheds, crashes;
+  function initLab() {
+    $("demo-opts").innerHTML = META.demo_workers.map((w) =>
+      `<div class="worker"><span><b class="mono">W${w.id}</b> · ${esc(w.label)}</span><span class="mono">speed ${w.speed}</span></div>`).join("");
+    getTasks = range("n_tasks"); getWorkers = range("n_workers"); getP = range("p", 2);
+    const workerCount = () => (getPreset() === "demo" ? META.demo_workers.length : getWorkers());
+    getPreset = seg("preset", (v) => {
+      $("demo-opts").hidden = v !== "demo"; $("fleet-opts").hidden = v === "demo";
+      $("warm-hint").textContent = v === "demo" ? "The monitor has seen one earlier workflow on this pool." : "The monitor has seen two earlier workflows on this pool.";
+      if (v === "demo") { crashes.reset(DEMO_CRASHES); $("p").value = 0; }
+      else { crashes.reset([]); $("p").value = 0.3; }
+      $("p").dispatchEvent(new Event("input"));
+    });
+    $("n_workers").addEventListener("input", () => crashes.refreshWorkers());
+    crashes = crashEditor("crashes", "add-crash", workerCount, DEMO_CRASHES);
+    getScheds = schedList("scheds", ["eft-retry", "adaptive", "replicate-2", "heft"]);
+    $("run").addEventListener("click", runLab);
+  }
+  async function runLab() {
+    const btn = $("run"); $("lab-err").textContent = "";
+    const spec = { preset: getPreset(), n_tasks: getTasks(), n_workers: getWorkers(), seed: +$("seed").value,
+      degrade: $("degrade").checked, warm: $("warm").checked, failure_prob: getP(), crashes: crashes.get(), schedulers: getScheds() };
+    if (!spec.schedulers.length) { $("lab-err").textContent = "Choose at least one scheduler."; return; }
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Running…';
+    try {
+      const res = await api("/api/simulate", spec);
+      $("lab-empty").hidden = true; $("lab-out").hidden = false;
+      $("lab-scn").textContent = `${res.scenario} · ${res.faults}`;
+      $("lab-headline").innerHTML = headline(res.rows);
+      $("lab-table").innerHTML = comparisonTable(res.rows);
+      showFrame($("lab-frame"), res.viewer);
+    } catch (e) { $("lab-err").textContent = e.message; }
+    finally { btn.disabled = false; btn.textContent = "▶ Run simulation"; }
+  }
+
+  // ---------------------------------------------------------------- live cluster
+  let liveCrashes, getLiveScheds, getSpu, logN = 0, polling = null;
+  const urlList = () => $("urls").value.split(/\s+/).map((s) => s.trim()).filter(Boolean);
+  function initLive() {
+    getSpu = range("spu", 2);
+    liveCrashes = crashEditor("chaos", "add-chaos", () => Math.max(1, urlList().length), [{ worker: 1, at: 8, downtime: 10 }]);
+    $("urls").addEventListener("change", () => liveCrashes.refreshWorkers());
+    getLiveScheds = schedList("live-scheds", ["heft", "eft-retry", "adaptive", "adaptive-qubo"]);
+    $("check").addEventListener("click", checkWorkers);
+    $("run-live").addEventListener("click", runLive);
+  }
+  async function checkWorkers() {
+    $("live-workers").innerHTML = '<span class="hint"><span class="spinner"></span>Contacting agents…</span>';
+    try {
+      const { workers } = await api("/api/live/check", { urls: urlList() });
+      $("live-workers").innerHTML = workers.map((w) => `
+        <div class="worker ${w.ok ? "ok" : "bad"}"><span><span class="dot"></span><b class="mono">W${w.index}</b> ${esc(w.ok ? w.worker_id : w.url)}</span>
+        <span class="mono">${w.ok ? `speed ${w.speed}${w.failure_rate != null ? ` · fail ${w.failure_rate}` : ""}` : esc(w.error || "unreachable")}</span></div>`).join("");
+      return workers.every((w) => w.ok);
+    } catch (e) { $("live-workers").innerHTML = `<span class="error">${esc(e.message)}</span>`; return false; }
+  }
+  function colorLine(l) {
+    const cls = l.startsWith("===") ? "c-head" : /CHAOS/.test(l) ? "c-chaos" : /FAIL|failed|unavailable|error/i.test(l) ? "c-bad" : /^-->|succeeded|completed=True/.test(l) ? "c-ok" : "";
+    return `<div class="${cls}">${esc(l)}</div>`;
+  }
+  async function runLive() {
+    $("live-err").textContent = "";
+    const scheds = getLiveScheds();
+    if (!scheds.length) { $("live-err").textContent = "Choose at least one scheduler."; return; }
+    if (!(await checkWorkers())) { $("live-err").textContent = "Not all workers are reachable. Start them first (see “How to start the workers”)."; return; }
+    try { await api("/api/live/run", { urls: urlList(), schedulers: scheds, crashes: liveCrashes.get(), seconds_per_unit: getSpu() }); }
+    catch (e) { $("live-err").textContent = e.message; return; }
+    $("run-live").disabled = true; $("console").innerHTML = ""; $("live-table").innerHTML = ""; $("live-frame").hidden = true; logN = 0;
+    setState("running"); clearInterval(polling); polling = setInterval(poll, 400);
+  }
+  function setState(s) { const el = $("live-state"); el.className = "pill " + s; el.innerHTML = (s === "running" ? '<span class="spinner"></span>' : "") + s; }
+  async function poll() {
+    let st;
+    try { st = await api("/api/live/status?since=" + logN); } catch (e) { return; }
+    if (st.log.length) {
+      const c = $("console"), atEnd = c.scrollTop + c.clientHeight >= c.scrollHeight - 30;
+      c.insertAdjacentHTML("beforeend", st.log.map(colorLine).join("")); logN = st.n;
+      if (atEnd) c.scrollTop = c.scrollHeight;
+    }
+    if (st.rows.length) $("live-table").innerHTML = comparisonTable(st.rows);
+    if (st.state !== "running") {
+      clearInterval(polling); $("run-live").disabled = false; setState(st.state);
+      if (st.error) $("live-err").textContent = st.error;
+      if (st.viewer) showFrame($("live-frame"), st.viewer);
+    }
+  }
+
+  // ---------------------------------------------------------------- held-out results
+  let RESULTS = null, getScn, rP = 0.3;
+  const BASES = [["eft-retry", "--s1"], ["replicate-2", "--s2"], ["heft", "--s4"], ["eft-threshold", "--s3"],
+    ["reliability-heft", "--s5"], ["least-loaded", "--s6"], ["round-robin", "--s6"], ["adaptive-qubo", "--s5"]];
+  const LABEL = { "eft-retry": "EFT-retry", "replicate-2": "Replicate-2", "heft": "Static HEFT", "eft-threshold": "Threshold FT",
+    "reliability-heft": "Reliability term only", "least-loaded": "Least-loaded", "round-robin": "Round Robin", "adaptive-qubo": "Adaptive QUBO" };
+  const shownBases = new Set(["eft-retry", "replicate-2", "heft", "eft-threshold"]);
+  async function loadResults() {
+    try { RESULTS = await api("/api/results"); } catch (e) { $("r-chart").innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
+    if (!RESULTS.rows.length) { $("r-chart").innerHTML = '<div class="hint">docs/paired_vs_baselines.csv not found.</div>'; return; }
+    $("r-src").textContent = "Source: " + RESULTS.source + " (scripts/paired_stats.py on the held-out runs).";
+    const avail = new Set(RESULTS.rows.map((r) => r.vs));
+    $("r-base").innerHTML = BASES.filter(([b]) => avail.has(b)).map(([b, c]) =>
+      `<button class="chip" data-b="${b}" aria-pressed="${shownBases.has(b)}"><i style="background:var(${c})"></i>${LABEL[b] || b}</button>`).join("");
+    $("r-base").addEventListener("click", (e) => {
+      const b = e.target.closest("button"); if (!b) return;
+      shownBases.has(b.dataset.b) ? shownBases.delete(b.dataset.b) : shownBases.add(b.dataset.b);
+      b.setAttribute("aria-pressed", shownBases.has(b.dataset.b)); drawChart();
+    });
+    const ps = [...new Set(RESULTS.rows.map((r) => r.p))].sort((a, b) => a - b);
+    $("r-p").innerHTML = ps.map((p) => `<button data-v="${p}" aria-pressed="${p === rP}">p = ${p}</button>`).join("");
+    seg("r-p", (v) => { rP = +v; drawTable(); });
+    getScn = seg("r-scn", () => { drawChart(); drawTable(); drawKpis(); });
+    drawKpis(); drawChart(); drawTable();
+  }
+  const pick = (scn, vs, p) => RESULTS.rows.find((r) => r.scenario === scn && r.vs === vs && r.p === p);
+  function drawKpis() {
+    const scn = getScn ? getScn() : "cold";
+    const h = pick(scn, "heft", 0.3), r2 = pick(scn, "replicate-2", 0.3), e = pick(scn, "eft-retry", 0.3), t = pick(scn, "eft-threshold", 0.3);
+    const k = (big, title, sub) => `<div class="kpi"><b>${big}</b><span>${title}</span><small>${sub}</small></div>`;
+    $("kpis").innerHTML = [
+      h && k(`${fmt(-h.mean)}%`, "faster than static HEFT", `at p = 0.3 · ±${fmt(h.ci)} · HEFT completed ${fmt(100 * h.succ_b, 0)}%`),
+      t && k(`${fmt(-t.mean)}%`, "faster than threshold FT", `at p = 0.3 · ±${fmt(t.ci)}${t.sig ? "" : " · not significant"}`),
+      r2 && k(`${fmt(-r2.mean)}%`, "faster than replicate-2", `at p = 0.3 · wasted/useful ${fmt(r2.ovh_a, 2)} vs ${fmt(r2.ovh_b, 2)}`),
+      e && k(`${fmt(-e.mean)}%`, "vs reliability-blind retry", `at p = 0.3 · ±${fmt(e.ci)}${e.sig ? "" : " · not significant"} · completed ${fmt(100 * e.succ_a, 0)}% vs ${fmt(100 * e.succ_b, 0)}%`),
+    ].filter(Boolean).join("");
+  }
+  function drawChart() {
+    if (!RESULTS || !getScn) return;
+    const scn = getScn(), css = getComputedStyle(root);
+    const series = BASES.filter(([b]) => shownBases.has(b)).map(([b, c]) => ({ b, color: css.getPropertyValue(c).trim(),
+      pts: RESULTS.rows.filter((r) => r.scenario === scn && r.vs === b).sort((x, y) => x.p - y.p) })).filter((s) => s.pts.length);
+    const all = series.flatMap((s) => s.pts.flatMap((p) => [p.mean - p.ci, p.mean + p.ci]));
+    if (!all.length) { $("r-chart").innerHTML = '<div class="hint">Select at least one baseline.</div>'; return; }
+    const W = 960, H = 380, m = { l: 56, r: 150, t: 16, b: 40 };
+    const lo = Math.min(-5, Math.floor(Math.min(...all) / 10) * 10), hi = Math.max(5, Math.ceil(Math.max(...all) / 10) * 10);
+    const ps = [...new Set(series.flatMap((s) => s.pts.map((p) => p.p)))].sort((a, b) => a - b);
+    const x = (p) => m.l + (W - m.l - m.r) * (ps.indexOf(p) + 0.5) / ps.length;
+    const y = (v) => m.t + (H - m.t - m.b) * (hi - v) / (hi - lo);
+    const step = (hi - lo) > 60 ? 20 : 10;
+    let g = "";
+    for (let v = lo; v <= hi; v += step) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end">${v > 0 ? "+" : ""}${v}%</text>`;
+    g += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-width="1.5"/>`;
+    ps.forEach((p) => (g += `<text x="${x(p)}" y="${H - m.b + 20}" text-anchor="middle">p = ${p}</text>`));
+    const off = (i) => (i - (series.length - 1) / 2) * 9;
+    const ends = [];
+    series.forEach((s, i) => {
+      const pts = s.pts.map((p) => [x(p.p) + off(i), y(p.mean), p]);
+      g += `<polyline fill="none" stroke="${s.color}" stroke-width="2.2" points="${pts.map(([a, b]) => `${a},${b}`).join(" ")}"/>`;
+      pts.forEach(([a, b, p]) => {
+        g += `<line x1="${a}" x2="${a}" y1="${y(p.mean - p.ci)}" y2="${y(p.mean + p.ci)}" stroke="${s.color}" stroke-width="1.4" opacity="0.7"/>`;
+        g += `<circle cx="${a}" cy="${b}" r="4.5" fill="${p.sig ? s.color : "var(--panel)"}" stroke="${s.color}" stroke-width="2"><title>${LABEL[s.b] || s.b}, p = ${p.p}: ${p.mean > 0 ? "+" : ""}${fmt(p.mean)}% ± ${fmt(p.ci)} (n = ${p.n})</title></circle>`;
+      });
+      const last = pts[pts.length - 1]; ends.push({ y: last[1], s });
+    });
+    ends.sort((a, b) => a.y - b.y);
+    for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + 16);
+    ends.forEach(({ y: yy, s }) => (g += `<text class="lab" x="${W - m.r + 12}" y="${yy + 4}" style="fill:${s.color};font-weight:600">${LABEL[s.b] || s.b}</text>`));
+    g += `<text x="${m.l}" y="${m.t - 2}" class="lab" style="font-size:11px;fill:var(--muted)">▲ adaptive slower</text><text x="${m.l}" y="${H - m.b - 6}" class="lab" style="font-size:11px;fill:var(--muted)">▼ adaptive faster</text>`;
+    $("r-chart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Paired makespan change of adaptive vs baselines by failure probability">${g}</svg>`;
+  }
+  function drawTable() {
+    if (!RESULTS || !getScn) return;
+    const scn = getScn(), rows = RESULTS.rows.filter((r) => r.scenario === scn && r.p === rP);
+    const order = BASES.map(([b]) => b).concat(rows.map((r) => r.vs));
+    rows.sort((a, b) => order.indexOf(a.vs) - order.indexOf(b.vs));
+    const pct = (a) => `${fmt(100 * a, 0)}%`;
+    $("r-table").innerHTML = `<thead><tr><th>Adaptive vs</th><th>Makespan change</th><th>Adaptive wins</th><th>Completed (A / base)</th><th>Deadline met (A / base)</th><th>Wasted / useful (A / base)</th><th>Pairs</th></tr></thead><tbody>${rows.map((r) => `
+      <tr><td><b>${esc(LABEL[r.vs] || r.vs)}</b> <span class="hint mono">${esc(r.vs)}</span></td>
+      <td class="${r.sig && r.mean < 0 ? "best" : ""}">${r.mean > 0 ? "+" : ""}${fmt(r.mean)}% ± ${fmt(r.ci)}${r.sig ? "" : ' <span class="hint">n.s.</span>'}</td>
+      <td>${pct(r.win)}</td><td>${pct(r.succ_a)} / ${pct(r.succ_b)}</td><td>${pct(r.dl_a)} / ${pct(r.dl_b)}</td>
+      <td>${fmt(r.ovh_a, 2)} / ${fmt(r.ovh_b, 2)}</td><td>${r.n}</td></tr>`).join("")}</tbody>`;
+  }
+
+  // ---------------------------------------------------------------- recorded
+  function initRecorded() {
+    const list = META.recordings;
+    $("reclist").innerHTML = list.length ? list.map((r) => `<button class="rec" data-f="${esc(r.file)}" aria-pressed="false"><b>${esc(r.title)}</b><span>${esc(r.file)}</span></button>`).join("")
+      : '<div class="hint">No recordings found under docs/demo/.</div>';
+    $("reclist").addEventListener("click", (e) => {
+      const b = e.target.closest("button"); if (!b) return;
+      $("reclist").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b));
+      showFrame($("rec-frame"), null, "/recorded/" + encodeURIComponent(b.dataset.f));
+    });
+  }
+
+  // ---------------------------------------------------------------- boot
+  api("/api/meta").then((m) => {
+    META = m; initLab(); initLive(); initRecorded();
+    const tab = location.hash.slice(1);
+    const b = document.querySelector(`nav button[data-view="${tab}"]`); if (b) b.click();
+  }).catch((e) => { document.querySelector("main").innerHTML = `<div class="card error">Could not reach the studio server: ${esc(e.message)}</div>`; });
+})();
+</script>
+</body>
+</html>
