@@ -19,7 +19,7 @@ Docker containers) that execute real tasks and fail for real.
 python -m venv .venv
 # Windows: .venv\Scripts\activate     Linux/macOS: source .venv/bin/activate
 pip install -e ".[dev]"
-pytest -q                      # 81 tests (engine invariants, FT policies, QUBO vs exact, HTTP agents, viewer, studio)
+pytest -q                      # 82 tests (engine invariants, FT policies, QUBO vs exact, HTTP agents, viewer, studio)
 ```
 
 If you skip activation, call the venv's Python directly: `.venv\Scripts\python.exe ...`.
